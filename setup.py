@@ -5,6 +5,8 @@ from setuptools import find_packages, setup
 import os
 import subprocess
 import time
+import torch
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
 
 version_file = 'basicsr/version.py'
 
@@ -115,12 +117,6 @@ def get_requirements(filename='requirements.txt'):
 if __name__ == '__main__':
     cuda_ext = os.getenv('BASICSR_EXT')  # whether compile cuda ext
     if cuda_ext == 'True':
-        try:
-            import torch
-            from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
-        except ImportError:
-            raise ImportError('Unable to import torch - torch is needed to build cuda extensions')
-
         ext_modules = [
             make_cuda_ext(
                 name='deform_conv_ext',
@@ -138,10 +134,8 @@ if __name__ == '__main__':
                 sources=['src/upfirdn2d.cpp'],
                 sources_cuda=['src/upfirdn2d_kernel.cu']),
         ]
-        setup_kwargs = dict(cmdclass={'build_ext': BuildExtension})
     else:
         ext_modules = []
-        setup_kwargs = dict()
 
     write_version_py()
     setup(
@@ -165,8 +159,8 @@ if __name__ == '__main__':
             'Programming Language :: Python :: 3.8',
         ],
         license='Apache License 2.0',
-        setup_requires=['cython', 'numpy', 'torch'],
+        setup_requires=['cython', 'numpy'],
         install_requires=get_requirements(),
         ext_modules=ext_modules,
-        zip_safe=False,
-        **setup_kwargs)
+        cmdclass={'build_ext': BuildExtension},
+        zip_safe=False)
