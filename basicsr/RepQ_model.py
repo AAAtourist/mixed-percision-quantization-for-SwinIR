@@ -414,28 +414,13 @@ class RepQModel:
     def __init__(self, opt):
         self.opt = opt
         self.logger = get_root_logger()
-        self.device = torch.device("cuda:5" if opt["num_gpu"] != 0 else "cpu")
+        self.device = torch.device("cuda" if opt["num_gpu"] != 0 else "cpu")
         self.is_train = opt["is_train"]
         self.phase = 1
         self.schedulers = []  # contains all the scheduler
         self.optimizers = []  # contains all the optim
 
         self.cali_data = torch.load(opt['cali_data'])
-        
-        
-        print('a')
-        print('a')
-        print('a')
-        print('a')
-        print('a')
-        print('a')
-        print(self.device)
-        print('a')
-        print('a')
-        print('a')
-        print('a')
-        print('a')
-        
 
         self.net_F = build_network(opt["network_Q"])  # FP model
         self.load_network(

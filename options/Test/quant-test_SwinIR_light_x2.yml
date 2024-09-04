@@ -1,6 +1,6 @@
 # general settings
-name: test_SwinIR_light_x2
-model_type: SwinIRModel
+name: test_RepQ_light_x2
+model_type: RepQModel
 scale: 2
 num_gpu: 1
 manual_seed: 10

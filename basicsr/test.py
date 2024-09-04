@@ -1,16 +1,17 @@
 import logging
 import torch
 from os import path as osp
+import os
 
 from basicsr.data import build_dataloader, build_dataset
 from basicsr.models import build_model
 from basicsr.utils import get_env_info, get_root_logger, get_time_str, make_exp_dirs
 from basicsr.utils.options import dict2str, parse_options
-from RepQ_model import RepQModel
 
 def test_pipeline(root_path):
     # parse options, set distributed setting, set ramdom seed
     opt, _ = parse_options(root_path, is_train=False)
+    os.environ['CUDA_VISIBLE_DEVICES'] = f"{opt['gpu']}"
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
@@ -32,8 +33,8 @@ def test_pipeline(root_path):
         test_loaders.append(test_loader)
 
     # create model
-    #model = build_model(opt)
-    model = RepQModel(opt)
+    model = build_model(opt)
+    # model = RepQModel(opt)
     #model = model.model_to_device(model)
     for test_loader in test_loaders:
         test_set_name = test_loader.dataset.opt['name']
