@@ -2,7 +2,7 @@ from functools import partial
 import os
 from re import L
 import time
-from imageio import imopen
+
 import numpy as np
 import torch
 from collections import OrderedDict

@@ -7,7 +7,7 @@ manual_seed: 10
 
 is_train: False
 bit: 4
-cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
+cali_data: keydata/cali_data_100_x2.pth
 quant: 
   self_ensamble: False
 
