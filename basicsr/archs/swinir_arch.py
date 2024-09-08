@@ -9,7 +9,11 @@ import torch.utils.checkpoint as checkpoint
 
 from basicsr.utils.registry import ARCH_REGISTRY
 from .arch_util import to_2tuple, trunc_normal_
+from ..draw_plot import draw_plot
 
+class MatMul(nn.Module):
+    def forward(self, A, B):
+        return A @ B
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -53,9 +57,14 @@ class Mlp(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
+        #print('fc1')
+        #print(x.shape)
+        draw_plot(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
+        #print('fc2')
+        #print(x.shape)
         x = self.drop(x)
         return x
 
@@ -138,6 +147,9 @@ class WindowAttention(nn.Module):
 
         self.proj_drop = nn.Dropout(proj_drop)
 
+        self.MatMul1 = MatMul()
+        self.MatMul2 = MatMul()
+
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
@@ -152,7 +164,8 @@ class WindowAttention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        attn = self.MatMul1(q, k.transpose(-2, -1))
+        #attn = (q @ k.transpose(-2, -1))
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
@@ -166,10 +179,11 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
-
+        
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
+        x = self.MatMul2(attn, v).transpose(1, 2).reshape(b_, n, c)
+        #x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -288,7 +302,6 @@ class SwinTransformerBlock(nn.Module):
         shortcut = x
         x = self.norm1(x)
         x = x.view(b, h, w, c)
-
         # cyclic shift
         if self.shift_size > 0:
             shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
@@ -794,6 +807,7 @@ class SwinIR(nn.Module):
 
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+
 
         # build Residual Swin Transformer blocks (RSTB)
         self.layers = nn.ModuleList()

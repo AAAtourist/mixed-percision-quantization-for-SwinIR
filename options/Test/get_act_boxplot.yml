@@ -1,0 +1,55 @@
+# general settings
+name: test_SwinIR_light_x2
+model_type: SwinIRModel
+scale: 2
+num_gpu: 1
+manual_seed: 10
+gpu: 5
+
+
+
+datasets:
+  test_1:  # the 1st test dataset
+    task: SR
+    name: Set5
+    type: PairedImageDataset
+    dataroot_gt: /data/user/tourist/mixed-percision-quantization-for-SwinIR/draw_plot_dataset/HR
+    dataroot_lq: /data/user/tourist/mixed-percision-quantization-for-SwinIR/draw_plot_dataset/LR_bicubic/X2
+    filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
+
+
+# network structures
+network_g:
+  type: SwinIR
+  upscale: 2
+  img_size: 64
+  window_size: 8
+  img_range: 1.
+  depths: [6,6,6,6]
+  embed_dim: 60
+  num_heads: [6,6,6,6]
+  mlp_ratio: 2
+  upsampler: pixelshuffledirect
+
+# path
+path:
+  pretrain_network_g: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
+  strict_load_g: True
+
+# validation settings
+val:
+  save_img: True
+  suffix: ~  # add suffix to saved images, if None, use exp name
+  use_chop: False  # True to save memory, if img too large
+
+  metrics:
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      crop_border: 2
+      test_y_channel: True
+    ssim:
+      type: calculate_ssim
+      crop_border: 2
+      test_y_channel: True

@@ -8,6 +8,7 @@ tb_logger/*
 wandb/*
 tmp/*
 visual/*
+draw_plot_dataset/*
 
 docs/api
 scripts/__init__.py
