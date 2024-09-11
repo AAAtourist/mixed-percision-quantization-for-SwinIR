@@ -34,8 +34,6 @@ def test_pipeline(root_path):
 
     # create model
     model = build_model(opt)
-    # model = RepQModel(opt)
-    #model = model.model_to_device(model)
     for test_loader in test_loaders:
         test_set_name = test_loader.dataset.opt['name']
         logger.info(f'Testing {test_set_name}...')
