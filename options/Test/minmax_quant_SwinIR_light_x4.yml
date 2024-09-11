@@ -1,20 +1,18 @@
 # general settings
-name: test_SwinIR_light_x2_bit2_percentile_token_test
+name: test_SwinIR_light_x4_bit4_percentile_token
 model_type: SwinIRModel
-scale: 2
+scale: 4
 num_gpu: 1
 manual_seed: 10
 gpu: 5
 
 quantization:
   input_quant_params:
-    n_bits: 2
-    channel_wise: False
-  weight_quant_params:
-    n_bits: 2
+    n_bits: 4
     channel_wise: True
-
-
+  weight_quant_params:
+    n_bits: 4
+    channel_wise: True
 
 datasets:
   test_1:  # the 1st test dataset
@@ -22,8 +20,8 @@ datasets:
     name: Set5
     type: PairedImageDataset
     dataroot_gt: /data/dataset/SR/benchmark/Set5/HR
-    dataroot_lq: /data/dataset/SR/benchmark/Set5/LR_bicubic/X2
-    filename_tmpl: '{}x2'
+    dataroot_lq: /data/dataset/SR/benchmark/Set5/LR_bicubic/X4
+    filename_tmpl: '{}x4'
     io_backend:
       type: disk
 
@@ -32,8 +30,8 @@ datasets:
     name: Set14
     type: PairedImageDataset
     dataroot_gt: /data/dataset/SR/benchmark/Set14/HR
-    dataroot_lq: /data/dataset/SR/benchmark/Set14/LR_bicubic/X2
-    filename_tmpl: '{}x2'
+    dataroot_lq: /data/dataset/SR/benchmark/Set14/LR_bicubic/X4
+    filename_tmpl: '{}x4'
     io_backend:
       type: disk
 
@@ -42,8 +40,8 @@ datasets:
     name: B100
     type: PairedImageDataset
     dataroot_gt: /data/dataset/SR/benchmark/B100/HR
-    dataroot_lq: /data/dataset/SR/benchmark/B100/LR_bicubic/X2
-    filename_tmpl: '{}x2'
+    dataroot_lq: /data/dataset/SR/benchmark/B100/LR_bicubic/X4
+    filename_tmpl: '{}x4'
     io_backend:
       type: disk
 
@@ -52,8 +50,8 @@ datasets:
     name: Urban100
     type: PairedImageDataset
     dataroot_gt: /data/dataset/SR/benchmark/Urban100/HR
-    dataroot_lq: /data/dataset/SR/benchmark/Urban100/LR_bicubic/X2
-    filename_tmpl: '{}x2'
+    dataroot_lq: /data/dataset/SR/benchmark/Urban100/LR_bicubic/X4
+    filename_tmpl: '{}x4'
     io_backend:
       type: disk
 
@@ -62,8 +60,8 @@ datasets:
     name: Manga109
     type: PairedImageDataset
     dataroot_gt: /data/dataset/SR/benchmark/Manga109/HR
-    dataroot_lq: /data/dataset/SR/benchmark/Manga109/LR_bicubic/X2
-    filename_tmpl: '{}_LRBI_x2'
+    dataroot_lq: /data/dataset/SR/benchmark/Manga109/LR_bicubic/X4
+    filename_tmpl: '{}_LRBI_x4'
     io_backend:
       type: disk
 
@@ -71,7 +69,7 @@ datasets:
 # network structures
 network_g:
   type: SwinIR
-  upscale: 2
+  upscale: 4
   img_size: 64
   window_size: 8
   img_range: 1.
@@ -83,7 +81,7 @@ network_g:
 
 # path
 path:
-  pretrain_network_g: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
+  pretrain_network_g: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4.pth
   strict_load_g: True
 
 # validation settings
@@ -95,9 +93,9 @@ val:
   metrics:
     psnr: # metric name, can be arbitrary
       type: calculate_psnr
-      crop_border: 2
+      crop_border: 4
       test_y_channel: True
     ssim:
       type: calculate_ssim
-      crop_border: 2
+      crop_border: 4
       test_y_channel: True

@@ -57,14 +57,9 @@ class Mlp(nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
-        #print('fc1')
-        #print(x.shape)
-        draw_plot(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
-        #print('fc2')
-        #print(x.shape)
         x = self.drop(x)
         return x
 

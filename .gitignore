@@ -12,6 +12,8 @@ draw_plot_dataset/*
 
 docs/api
 scripts/__init__.py
+/get_result.py
+
 
 *.DS_Store
 .idea

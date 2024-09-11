@@ -36,6 +36,9 @@ import warnings
 num_linear = 0
 num_matmul = 0
 
+def lp_loss(pred, tgt, p=2.0):
+    return (pred-tgt).abs().pow(p).mean()
+
 class UniformQuantizer(nn.Module):
     def __init__(self, n_bits: int = 8, channel_wise: bool = False):
         super(UniformQuantizer, self).__init__()
@@ -66,7 +69,9 @@ class UniformQuantizer(nn.Module):
             x_clone = x.clone().detach()
             n_channels = x_clone.shape[-1] if len(x.shape) == 3 else x_clone.shape[0]
             if len(x.shape) == 4:
-                x_max = x_clone.abs().max(dim=-1)[0].max(dim=-1)[0].max(dim=-1)[0]
+                n_channels = x_clone.shape[1] * x_clone.shape[-1]
+                x_max = x_clone.abs().max(dim=0)[0].max(dim=1)[0].reshape(-1)
+                #x_max = x_clone.abs().max(dim=-1)[0].max(dim=-1)[0].max(dim=-1)[0]
             elif len(x.shape) == 2:
                 x_max = x_clone.abs().max(dim=-1)[0]
             elif len(x.shape) == 3:
@@ -77,16 +82,16 @@ class UniformQuantizer(nn.Module):
             delta = x_max.clone()
             zero_point = x_max.clone()
             # determine the scale and zero point channel-by-channel
-            print('channel_number')
-            print(n_channels)
             for c in range(n_channels):
                 if len(x.shape) == 3:
                     delta[c], zero_point[c] = self.init_quantization_scale(x_clone[:,:,c], channel_wise=False)
+                elif len(x.shape) == 4:
+                    delta[c], zero_point[c] = self.init_quantization_scale(x_clone[:, c // x_clone.shape[-1], :, c // x_clone.shape[1]], channel_wise=False)
                 else:
                     delta[c], zero_point[c] = self.init_quantization_scale(x_clone[c], channel_wise=False)
             if len(x.shape) == 4:
-                delta = delta.view(-1, 1, 1, 1)
-                zero_point = zero_point.view(-1, 1, 1, 1)
+                delta = delta.view(1, x_clone.shape[1], 1, -1)
+                zero_point = zero_point.view(1, x_clone.shape[1], 1, -1)
             elif len(x.shape) == 2:
                 delta = delta.view(-1, 1)
                 zero_point = zero_point.view(-1, 1)
@@ -99,10 +104,30 @@ class UniformQuantizer(nn.Module):
             x_clone = x.clone().detach()
             x_max = x_clone.max()
             x_min = x_clone.min()
+            best_score = lp_loss(x_clone, x_max, x_min)
             delta = (x_max - x_min) / (2 ** self.n_bits - 1)
             zero_point = (- x_min / delta).round()
+            for pct in [0.9, 0.99, 0.999]:
+                new_max = torch.quantile(x_clone.reshape(-1), pct)
+                new_min = torch.quantile(x_clone.reshape(-1), 1.0 - pct)
+
+                x_q = self.quantize(x_clone, new_max, new_min)
+                score = lp_loss(x_clone, x_q, p=2)
+
+                if score < best_score:
+                    best_score = score
+                    delta = (new_max - new_min) / (2 ** self.n_bits - 1)
+                    zero_point = (- new_min / delta).round()
 
         return delta, zero_point
+
+    def quantize(self, x, max, min):
+        delta = (max - min) / (2 ** self.n_bits - 1)
+        zero_point = (- min / delta).round()
+        x_int = torch.round(x / delta)
+        x_quant = torch.clamp(x_int + zero_point, 0, self.n_levels - 1)
+        x_float_q = (x_quant - zero_point) * delta
+        return x_float_q
 
 
 class QuantLinear(nn.Linear):
