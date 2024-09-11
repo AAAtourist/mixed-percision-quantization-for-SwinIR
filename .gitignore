@@ -9,6 +9,7 @@ wandb/*
 tmp/*
 visual/*
 draw_plot_dataset/*
+boxplot/*
 
 docs/api
 scripts/__init__.py
