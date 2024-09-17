@@ -1,19 +1,19 @@
 # general settings
-name: test_SwinIR_light_x2_bit2_percentile_token_test
+name: test_SwinIR_light_x2_log_bit4
 model_type: SwinIRModel
 scale: 2
 num_gpu: 1
-manual_seed: 10
-gpu: 5
+manual_seed: 0
+gpu: 1
 
-cali_data: keydata/cali_data_x2.pth
+cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
 quantization:
   input_quant_params:
-    n_bits: 2
-    channel_wise: False
+    n_bits: 4
+    channel_wise: True
   weight_quant_params:
-    n_bits: 2
+    n_bits: 4
     channel_wise: True
 
 

@@ -9,7 +9,7 @@ import torch.utils.checkpoint as checkpoint
 
 from basicsr.utils.registry import ARCH_REGISTRY
 from .arch_util import to_2tuple, trunc_normal_
-from ..draw_plot import draw_plot
+from ..draw_PDF import draw_pdf
 
 class MatMul(nn.Module):
     def forward(self, A, B):
