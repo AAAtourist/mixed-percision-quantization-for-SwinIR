@@ -149,9 +149,9 @@ class UniformQuantizer(nn.Module):
         x_float_q = (x_quant - zero_point) * delta
         return x_float_q
 
-class LogSqrt2Quantizer(nn.Module):
+class Log2Quantizer(nn.Module):
     def __init__(self, n_bits: int = 4, channel_wise: bool = False):
-        super(LogSqrt2Quantizer, self).__init__()
+        super(Log2Quantizer, self).__init__()
         assert 2 <= n_bits <= 8, 'bitwidth not supported'
         self.n_bits = n_bits
         self.n_levels = 2 ** self.n_bits
@@ -195,12 +195,10 @@ class LogSqrt2Quantizer(nn.Module):
 
     def quantize(self, x, delta):      
         from math import sqrt
-        x_int = torch.round(-1 * (x/delta).log2() * 2)
+        x_int = torch.round(-1 * (x/delta).log2())
         mask = x_int >= self.n_levels
         x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
-        odd_mask = (x_quant%2) * (sqrt(2)-1) + 1
-        x_float_q = 2**(-1 * torch.ceil(x_quant/2)) * odd_mask * delta
-        #x_float_q = 2**(-1 * torch.ceil(x_quant)) * delta
+        x_float_q = 2**(-1 * torch.ceil(x_quant)) * delta
         x_float_q[mask] = 0
         
         return x_float_q
@@ -242,8 +240,8 @@ class QuantMatMul(nn.Module):
 
         if 'log_quant' in input_quant_params_matmul:
             input_quant_params_matmul.pop('log_quant')
-            self.quantizer_A = LogSqrt2Quantizer(**input_quant_params_matmul)
-            self.quantizer_B = LogSqrt2Quantizer(**input_quant_params_matmul)
+            self.quantizer_A = Log2Quantizer(**input_quant_params_matmul)
+            self.quantizer_B = Log2Quantizer(**input_quant_params_matmul)
         else :
             self.quantizer_A = UniformQuantizer(**input_quant_params_matmul)
             self.quantizer_B = UniformQuantizer(**input_quant_params_matmul)
@@ -282,11 +280,6 @@ def quant_model(model, input_quant_params={}, weight_quant_params={}):
         if isinstance(m, nn.Linear):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
-            '''if 'fc2' in name:
-                input_params_log = deepcopy(input_quant_params)
-                input_params_log['log_quant'] = True
-                new_m = QuantLinear(m.in_features, m.out_features, input_params_log, weight_quant_params)
-            else:'''
             new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
             new_m.weight.data = m.weight.data
             new_m.bias = m.bias
