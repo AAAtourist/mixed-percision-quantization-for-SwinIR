@@ -1,3 +1,4 @@
+import itertools
 import torch
 from collections import OrderedDict
 from os import path as osp
@@ -61,9 +62,6 @@ class UniformQuantizer(nn.Module):
 
     def forward(self, x: torch.Tensor):
 
-        if self.inited is False:
-            self.delta, self.zero_point = self.init_quantization_scale(x, self.channel_wise)
-            self.inited = True
 
         # start quantization
         x_int = torch.round(x / self.delta) + self.zero_point
@@ -72,7 +70,7 @@ class UniformQuantizer(nn.Module):
 
         return x_dequant
 
-    def init_quantization_scale(self, x: torch.Tensor, channel_wise: bool = False):
+    '''def init_quantization_scale(self, x: torch.Tensor, channel_wise: bool = False):
         delta, zero_point = None, None
         if channel_wise:
             x_clone = x.clone().detach()
@@ -139,15 +137,20 @@ class UniformQuantizer(nn.Module):
                     delta = (new_max - new_min) / (2 ** self.n_bits - 1)
                     zero_point = (- new_min / delta).round()
 
-        return delta, zero_point
+        return delta, zero_point'''
 
     def quantize(self, x, max, min):
+        x_clone = x.clone().detach()    
         delta = (max - min) / (2 ** self.n_bits - 1)
         zero_point = (- min / delta).round()
-        x_int = torch.round(x / delta)
+        x_int = torch.round(x_clone / delta)
         x_quant = torch.clamp(x_int + zero_point, 0, self.n_levels - 1)
         x_float_q = (x_quant - zero_point) * delta
         return x_float_q
+    
+    def init_quantization_scale(self, max, min):
+        self.delta = (max - min) / (2 ** self.n_bits - 1)
+        self.zero_point = (- min / self.delta).round()
 
 class Log2Quantizer(nn.Module):
     def __init__(self, n_bits: int = 4, channel_wise: bool = False):
@@ -161,17 +164,15 @@ class Log2Quantizer(nn.Module):
 
     def forward(self, x: torch.Tensor):
         sign_x = torch.sign(x)
-        abs_x = torch.abs(x)
+        abs_x = torch.abs(x) + 0.0001
 
-        if self.inited is False:
-            self.delta = self.init_quantization_scale(abs_x)
-            self.inited = True
 
         # start quantization
         x_dequant = self.quantize(abs_x, self.delta)
         x_dequant *= sign_x
         return x_dequant
 
+    '''
     def init_quantization_scale(self, x: torch.Tensor):
         delta = None
         x_clone = x.clone().detach()
@@ -192,7 +193,7 @@ class Log2Quantizer(nn.Module):
                 delta = new_delta
 
         return delta
-
+    '''
     def quantize(self, x, delta):      
         from math import sqrt
         x_int = torch.round(-1 * (x/delta).log2())
@@ -202,18 +203,40 @@ class Log2Quantizer(nn.Module):
         x_float_q[mask] = 0
         
         return x_float_q
+    
+    def init_quantization_scale(self, delta):
+        self.delta = delta
+
+def compute_percentile(tensor, percentile):
+    '''
+        default:channel wise
+    '''
+    result = tensor
+    device = result.device 
+    percentile = percentile.to(device)
+    if len(tensor.shape) == 3:
+        for i in (0, 1):
+            result = torch.quantile(result, percentile, dim=i, keepdim=True) # input[1, 1, channels, C]
+    elif len(tensor.shape) == 2:
+        result = torch.quantile(result, percentile, dim=i, keepdim=True) # weight[1, channels, C]
+    else:
+        for i in (0, 2, 3):
+            result = torch.quantile(result, percentile, dim=i, keepdim=True)
+    
+    return result
 
 class QuantLinear(nn.Linear):
     def __init__(self,
                  in_features,
                  out_features,
-                 input_quant_params={},
-                 weight_quant_params={}):
+                 input_quantizer=None,
+                 weight_quantizer=None):
         super(QuantLinear, self).__init__(in_features, out_features)
 
         
-        self.input_quantizer = UniformQuantizer(**input_quant_params)
-        self.weight_quantizer = UniformQuantizer(**weight_quant_params)
+        self.input_quantizer = input_quantizer
+        self.weight_quantizer = weight_quantizer
+        self.quant_weight = None
 
         self.first_time = True
 
@@ -223,30 +246,33 @@ class QuantLinear(nn.Linear):
             print(f'one linear finish:{num_linear}')
             num_linear += 1
             self.first_time = False
+            self.quant_weight = self.weight_quantizer(self.weight)
         
         x = self.input_quantizer(x)
-        w = self.weight_quantizer(self.weight)
+        #w = self.weight_quantizer(self.weight)
         
-        out = F.linear(x, weight=w, bias=self.bias)
+        out = F.linear(x, weight=self.quant_weight, bias=self.bias)
+        #out = F.linear(x, weight=self.weight, bias=self.bias)
 
         return out
 
+    def search_best_setting(self, origin_output, x):
+        if isinstance(self.input_quantizer, UniformQuantizer):
+            loss = search_linear_quantizer(self.input_quantizer, self.weight_quantizer, origin_output, x, self.weight, self.bias)
+        else:
+            loss = search_log2_linear_quantizer(self.input_quantizer, self.weight_quantizer, origin_output, x, self.weight, self.bias)
+        
+        return loss
+
 class QuantMatMul(nn.Module):
-    def __init__(self,
-                 input_quant_params={}):
+    def __init__(self, 
+                 quantizer1=None,
+                 quantizer2=None):
         super(QuantMatMul, self).__init__()
 
-        input_quant_params_matmul = deepcopy(input_quant_params)
+        self.quantizer_A = quantizer1
+        self.quantizer_B = quantizer2
 
-        if 'log_quant' in input_quant_params_matmul:
-            input_quant_params_matmul.pop('log_quant')
-            self.quantizer_A = Log2Quantizer(**input_quant_params_matmul)
-            self.quantizer_B = Log2Quantizer(**input_quant_params_matmul)
-        else :
-            self.quantizer_A = UniformQuantizer(**input_quant_params_matmul)
-            self.quantizer_B = UniformQuantizer(**input_quant_params_matmul)
-
-        self.use_input_quant = True
         self.first_time = True
     
     def forward(self, A, B):
@@ -255,15 +281,252 @@ class QuantMatMul(nn.Module):
             print(f"one matmul finish:{num_matmul}")
             num_matmul += 1
             self.first_time = False
-        if self.use_input_quant:
-            A = self.quantizer_A(A)
-            B = self.quantizer_B(B)
+
+        A = self.quantizer_A(A)
+        B = self.quantizer_B(B)
         
         out = A @ B
         return out
 
+    def search_best_setting(self, origin_output, A, B):
+        if isinstance(self.quantizer_A, UniformQuantizer):
+            loss = search_matmul_quantizer(self.quantizer_A, self.quantizer_B, origin_output, A, B)
+        else:
+            loss = search_log2_matmul_quantizer(self.quantizer_A, self.quantizer_B, origin_output, A, B)
 
-def quant_model(model, input_quant_params={}, weight_quant_params={}):
+        return loss
+
+def search_matmul_quantizer(quantizer_A, quantizer_B, origin_output, A, B):
+    mat_A = A.clone().detach()
+    mat_B = B.clone().detach()
+
+    percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
+
+    combinations = list(itertools.product(percentiles, 1 - percentiles,
+                                          percentiles, 1 - percentiles)) 
+    combinations = torch.tensor(combinations)
+    A_min = combinations[:, 0]
+    A_max = combinations[:, 1]
+    B_min = combinations[:, 2]
+    B_max = combinations[:, 3]
+
+    num_combinations = A_min.size(0)
+
+    A_expanded = mat_A.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
+    B_expanded = mat_B.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
+
+    A_min_vals = compute_percentile(mat_A, A_min)
+    A_max_vals = compute_percentile(mat_A, A_max)
+    B_min_vals = compute_percentile(mat_B, B_min)
+    B_max_vals = compute_percentile(mat_B, B_max)
+
+    A_quant = quantizer_A.quantize(A_expanded, A_min_vals, A_max_vals).permute(4, 0, 1, 2, 3)
+    B_quant = quantizer_B.quantize(B_expanded, B_min_vals, B_max_vals).permute(4, 0, 1, 2, 3)
+
+    output_quantized = A_quant @ B_quant
+    origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1, -1) 
+
+    loss = F.mse_loss(output_quantized, origin_output, reduction='none')  # [C, 2048, 64, 180]
+    loss = loss.mean(dim=(1, 2, 3, 4))
+
+    min_loss, best_idx = loss.min(dim=0)
+
+    quantizer_A.init_quantization_scale(A_min_vals.reshape(num_combinations, -1)[best_idx],
+                                             A_max_vals.reshape(num_combinations, -1)[best_idx])
+    quantizer_B.init_quantization_scale(B_min_vals.reshape(num_combinations, -1)[best_idx],
+                                             B_max_vals.reshape(num_combinations, -1)[best_idx])
+    
+    return min_loss
+
+def search_log2_matmul_quantizer(quantizer_A, quantizer_B, origin_output, A, B):
+    mat_A = A.clone().detach()
+    mat_B = B.clone().detach()
+
+    percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
+
+    combinations = list(itertools.product(percentiles, percentiles)) 
+    combinations = torch.tensor(combinations)
+    A_max = combinations[:, 0]
+    B_max = combinations[:, 1]
+
+    num_combinations = A_max.size(0)
+
+    A_expanded = mat_A.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
+    B_expanded = mat_B.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
+
+    A_max_vals = compute_percentile(mat_A, A_max)
+    B_max_vals = compute_percentile(mat_B, B_max)
+
+    A_quant = quantizer_A.quantize(A_expanded, A_max_vals).permute(4, 0, 1, 2, 3)
+    B_quant = quantizer_B.quantize(B_expanded, B_max_vals).permute(4, 0, 1, 2, 3)
+
+    output_quantized = A_quant @ B_quant
+    origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1, -1) 
+
+    loss = F.mse_loss(output_quantized, origin_output, reduction='none')  # [C, 2048, 64, 180]
+    loss = loss.mean(dim=(1, 2, 3, 4))
+
+    min_loss, best_idx = loss.min(dim=0)
+
+    quantizer_A.init_quantization_scale(A_max_vals.reshape(num_combinations, -1)[best_idx])
+    quantizer_B.init_quantization_scale(B_max_vals.reshape(num_combinations, -1)[best_idx])
+    
+    return min_loss
+
+def search_linear_quantizer(input_quantizer, weight_quantizer, origin_output, x, weight, bias):
+    input_tensor = x.clone().detach()
+    weight_tensor = weight.clone().detach()
+
+    percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
+
+    combinations = list(itertools.product(percentiles, 1 - percentiles,
+                                          percentiles, 1 - percentiles)) 
+    combinations = torch.tensor(combinations)
+    input_min = combinations[:, 0]
+    input_max = combinations[:, 1]
+    weight_min = combinations[:, 2]
+    weight_max = combinations[:, 3]
+
+    num_combinations = input_min.size(0)
+    b, n, _ = input_tensor.shape
+    out_c = weight_tensor.shape[0]
+
+    input_expanded = input_tensor.unsqueeze(-1).expand(-1, -1, -1, num_combinations)  # [2048, 64, 60, C]
+    weight_expanded = weight_tensor.unsqueeze(-1).expand(-1, -1, num_combinations)  # [180, 60, C]
+
+    input_min_vals = compute_percentile(input_tensor, input_min)  # [1, 1, channels, C]
+    input_max_vals = compute_percentile(input_tensor, input_max)  # [1, 1, channels, C]
+    weight_min_vals = compute_percentile(weight_tensor, weight_min)  # [1, channels, C]
+    weight_max_vals = compute_percentile(weight_tensor, weight_max)  # [1, channels, C]
+
+    input_quant = input_quantizer.quantize(input_expanded, input_min_vals, input_max_vals) # [2048, 64, 60, C]
+    weight_quant = weight_quantizer.quantize(weight_expanded, weight_min_vals, weight_max_vals)  # [180, 60, C]
+
+    input_quant = input_quant.view(-1, input_tensor.size(2), num_combinations) #[2048, 64, 60, C] -> [2048 * 64, 60, C]
+    weight_quant = weight_quant.permute(2, 1, 0)  # [C, 60, 180]
+
+    output_quantized = torch.bmm(input_quant.transpose(0, 2), weight_quant)
+    output_quantized = output_quantized.view(num_combinations, b, n, out_c) + bias  # [C, 2048, 64, 180]
+
+    origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1) 
+
+    loss = F.mse_loss(output_quantized, origin_output, reduction='none')  # [C, 2048, 64, 180]
+    loss = loss.mean(dim=(1, 2, 3))
+
+    min_loss, best_idx = loss.min(dim=0)
+
+    #weight_quantizer.weight.data = weight_quant[best_idx].transpose(0, 1)
+    weight_quantizer.init_quantization_scale(weight_min_vals.reshape(num_combinations, -1)[best_idx],
+                                             weight_max_vals.reshape(num_combinations, -1)[best_idx])
+    input_quantizer.init_quantization_scale(input_min_vals.reshape(num_combinations, -1)[best_idx],
+                                             input_max_vals.reshape(num_combinations, -1)[best_idx])
+
+    return min_loss
+
+def search_log2_linear_quantizer(input_quantizer, weight_quantizer, origin_output, x, weight, bias):
+    input_tensor = x.clone().detach()
+    weight_tensor = weight.clone().detach()
+
+    percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
+
+    combinations = list(itertools.product(percentiles, percentiles)) 
+    combinations = torch.tensor(combinations)
+
+    input_delta = combinations[:, 0]
+    weight_delta = combinations[:, 1]
+
+    num_combinations = input_delta.size(0)
+    b, n, _ = input_tensor.shape
+    out_c = weight_tensor.shape[0]
+
+    input_expanded = input_tensor.unsqueeze(-1).expand(-1, -1, -1, num_combinations)  # [2048, 64, 60, C]
+    weight_expanded = weight_tensor.unsqueeze(-1).expand(-1, -1, num_combinations)  # [180, 60, C]
+
+    input_max_vals = compute_percentile(input_tensor, input_delta)  # [1, 1, channels, C]
+    weight_max_vals = compute_percentile(weight_tensor, weight_delta)  # [1, channels, C]
+
+    input_quant = input_quantizer.quantize(input_expanded, input_max_vals) # [2048, 64, 60, C]
+    weight_quant = weight_quantizer.quantize(weight_expanded, weight_max_vals)  # [180, 60, C]
+
+    input_quant = input_quant.view(-1, input_tensor.size(2), num_combinations) #[2048, 64, 60, C] -> [2048 * 64, 60, C]
+    weight_quant = weight_quant.permute(2, 1, 0)  # [C, 60, 180]
+
+    output_quantized = torch.bmm(input_quant.transpose(0, 2), weight_quant)
+    output_quantized = output_quantized.view(num_combinations, b, n, out_c) + bias  # [C, 2048, 64, 180]
+
+    origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1) 
+
+    loss = F.mse_loss(output_quantized, origin_output, reduction='none')  # [C, 2048, 64, 180]
+    loss = loss.mean(dim=(1, 2, 3))
+
+    min_loss, best_idx = loss.min(dim=0)
+
+    input_quantizer.init_quantization_scale(input_max_vals.reshape(num_combinations, -1)[best_idx])
+    weight_quantizer.init_quantization_scale(weight_max_vals.reshape(num_combinations, -1)[best_idx])
+
+    return min_loss
+
+def create_quantizers(default_quant_params={}):
+    quantizers = []
+    for i in [2, 3, 4, 8]:
+        #quant_param = {**default_quant_params, "n_bits": i}
+        input_param = {**default_quant_params["input_quant_params"], "n_bits": i}
+        weight_param = {**default_quant_params["weight_quant_params"], "n_bits": i}
+        #log_quant_param = {**default_quant_params, "n_bits": i, "log_quant": True}
+
+        uni_quantizer1 = UniformQuantizer(**input_param)
+        uni_quantizer2 = UniformQuantizer(**weight_param)
+
+        log_quantizer1 = Log2Quantizer(**input_param)
+        log_quantizer2 = Log2Quantizer(**weight_param)
+
+        uni_quantizer_name = f"uni_quantizer_bit{i}"
+        log_quantizer_name = f"log_quantizer_bit{i}"
+
+        quantizers.append({
+            "name": uni_quantizer_name,
+            "quantizer1": uni_quantizer1,
+            "quantizer2": uni_quantizer2
+        })
+        quantizers.append({
+            "name": log_quantizer_name,
+            "quantizer1": log_quantizer1,
+            "quantizer2": log_quantizer2
+        })
+    
+    return quantizers
+
+class List_Quantizers(nn.Module):
+    def __init__(self):
+        super(List_Quantizers, self).__init__()
+
+        self.quantizers_dict = {}
+        self.need_search = True
+
+    def forward(self, *args):
+
+        if self.need_search:
+            origin_output = self.quantizers_dict["origin_module"](*args)
+            self.module_search(origin_output, *args)
+            self.need_search = False
+
+        return self.quantizers_dict["best_module"](*args)
+
+    def append_quantizer(self, name, module):
+        self.quantizers_dict[name] = module
+
+    def module_search(self, origin_output, *args):
+        best_score = 1e+10
+        #print(self.quantizers_dict.items())
+        for name, module in self.quantizers_dict.items():
+            if name == "origin_module":
+                continue
+            loss = module.search_best_setting(origin_output, *args)
+            if loss < best_score:
+                best_score = loss
+                self.quantizers_dict["best_module"] = module
+
+def quant_model(model, quant_params={}):
 
     module_dict={}
     for name, m in model.named_modules():
@@ -280,20 +543,41 @@ def quant_model(model, input_quant_params={}, weight_quant_params={}):
         if isinstance(m, nn.Linear):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
-            new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
-            new_m.weight.data = m.weight.data
-            new_m.bias = m.bias
-            setattr(father_module, name[idx:], new_m)
+
+            quantizers = create_quantizers(quant_params)
+
+            linear_quantizers = List_Quantizers()
+
+            linear_quantizers.append_quantizer("origin_module", m)
+            for quantizer_info in quantizers:
+                input_quantizer = quantizer_info["quantizer1"]
+                weight_quantizer = quantizer_info["quantizer2"]
+
+                new_m = QuantLinear(m.in_features, m.out_features, input_quantizer, weight_quantizer)
+                new_m.weight.data = m.weight.data
+                new_m.bias = m.bias
+
+                linear_quantizers.append_quantizer(quantizer_info["name"], new_m)
+
+            setattr(father_module, name[idx:], linear_quantizers)
         elif isinstance(m, MatMul):
             # Matmul Layer
             idx = idx + 1 if idx != 0 else idx
-            if 'MatMul2' in name:
-                input_params_log = deepcopy(input_quant_params)
-                input_params_log['log_quant'] = True
-                new_m = QuantMatMul(input_params_log)
-            else:
-                new_m = QuantMatMul(input_quant_params)
-            setattr(father_module, name[idx:], new_m)
+
+            quantizers = create_quantizers(quant_params)
+
+            matmul_quantizers = List_Quantizers()
+
+            matmul_quantizers.append_quantizer("origin_module", m)
+            for quantizer_info in quantizers:
+                quantizer1 = quantizer_info["quantizer1"]
+                quantizer2 = quantizer_info["quantizer2"]
+
+                new_m = QuantMatMul(quantizer1, quantizer2)
+
+                matmul_quantizers.append_quantizer(quantizer_info["name"], new_m)
+
+            setattr(father_module, name[idx:], matmul_quantizers)
 
     return model
 
@@ -307,7 +591,7 @@ class SRModel(BaseModel):
         # define network
         self.net_g = build_network(opt['network_g'])
         self.net_g = self.model_to_device(self.net_g)
-        self.print_network(self.net_g)
+        #self.print_network(self.net_g)
 
         # load pretrained models
         load_path = self.opt['path'].get('pretrain_network_g', None)
@@ -318,8 +602,7 @@ class SRModel(BaseModel):
         if 'quantization' in self.opt:
             self.net_g = quant_model(
                 model = self.net_g,
-                input_quant_params=self.opt['quantization']['input_quant_params'],
-                weight_quant_params=self.opt['quantization']['weight_quant_params']
+                quant_params=self.opt['quantization']
                 )
             self.net_g = self.model_to_device(self.net_g)
             self.cali_data = torch.load(opt['cali_data'])
