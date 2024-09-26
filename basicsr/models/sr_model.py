@@ -49,6 +49,28 @@ num_matmul = 0
 def lp_loss(pred, tgt, p=2.0):
     return (pred-tgt).abs().pow(p).mean()
 
+def batch_bmm(input_quant, weight_quant, batch_size=64):
+    num_combinations = input_quant.size(0)
+
+    output_quantized_list = []
+
+    for i in range(0, num_combinations, batch_size):
+        end_idx = min(i + batch_size, num_combinations)
+        input_batch = input_quant[i:end_idx].cuda()
+        weight_batch = weight_quant[i:end_idx].cuda()
+        print(input_batch.shape)  # 确保输出为True，表示在GPU上
+        print(weight_batch.shape)
+        with torch.no_grad():
+            output_batch = torch.bmm(input_batch, weight_batch)
+
+        output_quantized_list.append(output_batch.cuda())
+
+        del input_batch, weight_batch, output_batch 
+        torch.cuda.empty_cache()
+
+    return torch.cat(output_quantized_list, dim=0).cuda()
+
+
 class UniformQuantizer(nn.Module):
     def __init__(self, n_bits: int = 8, channel_wise: bool = False):
         super(UniformQuantizer, self).__init__()
@@ -70,77 +92,10 @@ class UniformQuantizer(nn.Module):
 
         return x_dequant
 
-    '''def init_quantization_scale(self, x: torch.Tensor, channel_wise: bool = False):
-        delta, zero_point = None, None
-        if channel_wise:
-            x_clone = x.clone().detach()
-            n_channels = x_clone.shape[-1] if len(x.shape) == 3 else x_clone.shape[0]
-            if len(x.shape) == 4:
-                n_channels = x_clone.shape[1] * x_clone.shape[-1]
-                x_max = x_clone.abs().max(dim=0)[0].max(dim=1)[0].reshape(-1)
-                #x_max = x_clone.abs().max(dim=-1)[0].max(dim=-1)[0].max(dim=-1)[0]
-            elif len(x.shape) == 2:
-                x_max = x_clone.abs().max(dim=-1)[0]
-            elif len(x.shape) == 3:
-                x_max = x_clone.abs().max(dim=0)[0].max(dim=0)[0]
-            else:
-                raise NotImplementedError
 
-            delta = x_max.clone()
-            zero_point = x_max.clone()
-            
-            # determine the scale and zero point channel-by-channel
-            for c in range(n_channels):
-                if len(x.shape) == 3:
-                    delta[c], zero_point[c] = self.init_quantization_scale(x_clone[:,:,c], channel_wise=False)
-                elif len(x.shape) == 4:
-                    delta[c], zero_point[c] = self.init_quantization_scale(x_clone[:, c // x_clone.shape[-1], :, c // x_clone.shape[1]], channel_wise=False)
-                else:
-                    delta[c], zero_point[c] = self.init_quantization_scale(x_clone[c], channel_wise=False)
-            if len(x.shape) == 4:
-                delta = delta.view(1, x_clone.shape[1], 1, -1)
-                zero_point = zero_point.view(1, x_clone.shape[1], 1, -1)
-            elif len(x.shape) == 2:
-                delta = delta.view(-1, 1)
-                zero_point = zero_point.view(-1, 1)
-            elif len(x.shape) == 3:
-                delta = delta.view(1, 1, -1)
-                zero_point = zero_point.view(1, 1, -1)
-            else:
-                raise NotImplementedError
-        else:
-            x_clone = x.clone().detach()
-            x_max = x_clone.max()
-            x_min = x_clone.min()
-            best_score = 1e+10
-            delta = (x_max - x_min) / (2 ** self.n_bits - 1)
-            zero_point = (- x_min / delta).round()
-            for pct in [0.9, 0.99, 0.999, 0.9999, 0.99999]:
-                try:
-                    new_max = torch.quantile(x_clone.reshape(-1), pct)
-                    new_min = torch.quantile(x_clone.reshape(-1), 1.0 - pct)
-                except:
-                    new_max = torch.tensor(np.percentile(
-                        x_clone.reshape(-1).cpu(), pct * 100),
-                        device=x_clone.device,
-                        dtype=torch.float32)
-                    new_min = torch.tensor(np.percentile(
-                        x_clone.reshape(-1).cpu(), (1 - pct) * 100),
-                        device=x_clone.device,
-                        dtype=torch.float32)   
-
-                x_q = self.quantize(x_clone, new_max, new_min)
-                score = lp_loss(x_clone, x_q, p=2)
-
-                if score < best_score:
-                    best_score = score
-                    delta = (new_max - new_min) / (2 ** self.n_bits - 1)
-                    zero_point = (- new_min / delta).round()
-
-        return delta, zero_point'''
 
     def quantize(self, x, max, min):
-        x_clone = x.clone().detach()    
+        x_clone = x.clone().detach().cpu()
         delta = (max - min) / (2 ** self.n_bits - 1)
         zero_point = (- min / delta).round()
         x_int = torch.round(x_clone / delta)
@@ -207,11 +162,11 @@ class Log2Quantizer(nn.Module):
     def init_quantization_scale(self, delta):
         self.delta = delta
 
-def compute_percentile(tensor, percentile):
+def compute_percentile(x, pct, channel_wise=True):
     '''
         default:channel wise
     '''
-    result = tensor
+    '''result = tensor
     device = result.device 
     percentile = percentile.to(device)
     if len(tensor.shape) == 3:
@@ -221,9 +176,44 @@ def compute_percentile(tensor, percentile):
         result = torch.quantile(result, percentile, dim=i, keepdim=True) # weight[1, channels, C]
     else:
         for i in (0, 2, 3):
-            result = torch.quantile(result, percentile, dim=i, keepdim=True)
+            result = torch.quantile(result, percentile, dim=i, keepdim=True)# mat[1, channels, 1, 1, c]
     
-    return result
+    return result'''
+    x_clone = x.clone().detach()
+    
+    if channel_wise:
+        combinations = x.shape[-1]
+        #n_channels = x_clone.shape[2] if len(x.shape) == 4 else x_clone.shape[1]
+        #num = combinations * n_channels
+        num = combinations
+        max_per = torch.zeros(num)
+        print(num)
+        for channel in range(num):
+            print(channel)
+            if len(x.shape) == 3:
+                max_per[channel] = compute_percentile(x_clone[:,:, channel],
+                                                       pct[channel % combinations], channel_wise=False)
+            elif len(x.shape) == 4:
+                max_per[channel] = compute_percentile(x_clone[:,:,:, channel],
+                                                       pct[channel], channel_wise=False)
+            else:
+                max_per[channel] = compute_percentile(x_clone[:,:, :, :, channel],
+                                                    pct[channel], channel_wise=False)
+        if len(x.shape) == 4:
+            pct_tensor = max_per.view(1, 1, 1, -1)
+        elif len(x.shape) == 3:
+            pct_tensor = max_per.view(1, 1, -1)
+        else:
+            pct_tensor = max_per.view(1, 1, 1, 1, -1)
+    else:
+        """try:
+            pct_tensor = torch.quantile(x_clone.reshape(-1), pct)
+        except:"""
+        pct_tensor = torch.tensor(np.percentile(
+            x_clone.reshape(-1).cpu(), pct * 100),
+            device=x_clone.device,
+            dtype=torch.float32)
+    return pct_tensor
 
 class QuantLinear(nn.Linear):
     def __init__(self,
@@ -257,6 +247,7 @@ class QuantLinear(nn.Linear):
         return out
 
     def search_best_setting(self, origin_output, x):
+        print('start linear search')
         if isinstance(self.input_quantizer, UniformQuantizer):
             loss = search_linear_quantizer(self.input_quantizer, self.weight_quantizer, origin_output, x, self.weight, self.bias)
         else:
@@ -282,13 +273,14 @@ class QuantMatMul(nn.Module):
             num_matmul += 1
             self.first_time = False
 
-        A = self.quantizer_A(A)
-        B = self.quantizer_B(B)
+        A = self.quantizer_A()
+        B = self.quantizer_B()
         
         out = A @ B
         return out
 
     def search_best_setting(self, origin_output, A, B):
+        print('start matmul search')
         if isinstance(self.quantizer_A, UniformQuantizer):
             loss = search_matmul_quantizer(self.quantizer_A, self.quantizer_B, origin_output, A, B)
         else:
@@ -302,26 +294,31 @@ def search_matmul_quantizer(quantizer_A, quantizer_B, origin_output, A, B):
 
     percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
 
-    combinations = list(itertools.product(percentiles, 1 - percentiles,
-                                          percentiles, 1 - percentiles)) 
+    combinations = list(itertools.product(percentiles, 1 - percentiles))
     combinations = torch.tensor(combinations)
     A_min = combinations[:, 0]
     A_max = combinations[:, 1]
-    B_min = combinations[:, 2]
-    B_max = combinations[:, 3]
+    B_min = combinations[:, 0]
+    B_max = combinations[:, 1]
 
     num_combinations = A_min.size(0)
 
     A_expanded = mat_A.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
     B_expanded = mat_B.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
 
-    A_min_vals = compute_percentile(mat_A, A_min)
-    A_max_vals = compute_percentile(mat_A, A_max)
-    B_min_vals = compute_percentile(mat_B, B_min)
-    B_max_vals = compute_percentile(mat_B, B_max)
+    A_min_vals = compute_percentile(A_expanded, A_min)
+    A_max_vals = compute_percentile(A_expanded, A_max)
+    B_min_vals = compute_percentile(B_expanded, B_min)
+    B_max_vals = compute_percentile(B_expanded, B_max)
 
-    A_quant = quantizer_A.quantize(A_expanded, A_min_vals, A_max_vals).permute(4, 0, 1, 2, 3)
-    B_quant = quantizer_B.quantize(B_expanded, B_min_vals, B_max_vals).permute(4, 0, 1, 2, 3)
+    A_quant = quantizer_A.quantize(A_expanded, A_min_vals, A_max_vals)
+    B_quant = quantizer_B.quantize(B_expanded, B_min_vals, B_max_vals)
+    index = torch.arange(25).unsqueeze(-1).repeat(1, 25).reshape(-1)
+    A_quant = A_quant[..., index].permute(4, 0, 1, 2, 3)
+    B_quant = B_quant.unsqueeze(-2).expand(-1, -1, 25, 25)
+    B_quant = B_quant.reshape(*B_quant.shape[:-2], -1).permute(4, 0, 1, 2, 3)
+    num_combinations *= num_combinations
+
 
     output_quantized = A_quant @ B_quant
     origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1, -1) 
@@ -354,8 +351,8 @@ def search_log2_matmul_quantizer(quantizer_A, quantizer_B, origin_output, A, B):
     A_expanded = mat_A.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
     B_expanded = mat_B.unsqueeze(-1).expand(-1, -1, -1, -1, num_combinations)
 
-    A_max_vals = compute_percentile(mat_A, A_max)
-    B_max_vals = compute_percentile(mat_B, B_max)
+    A_max_vals = compute_percentile(A_expanded, A_max)
+    B_max_vals = compute_percentile(B_expanded, B_max)
 
     A_quant = quantizer_A.quantize(A_expanded, A_max_vals).permute(4, 0, 1, 2, 3)
     B_quant = quantizer_B.quantize(B_expanded, B_max_vals).permute(4, 0, 1, 2, 3)
@@ -379,13 +376,12 @@ def search_linear_quantizer(input_quantizer, weight_quantizer, origin_output, x,
 
     percentiles = torch.tensor([0.9, 0.99, 0.999, 0.9999, 0.99999])
 
-    combinations = list(itertools.product(percentiles, 1 - percentiles,
-                                          percentiles, 1 - percentiles)) 
+    combinations = list(itertools.product(percentiles, 1 - percentiles)) 
     combinations = torch.tensor(combinations)
     input_min = combinations[:, 0]
     input_max = combinations[:, 1]
-    weight_min = combinations[:, 2]
-    weight_max = combinations[:, 3]
+    weight_min = combinations[:, 0]
+    weight_max = combinations[:, 1]
 
     num_combinations = input_min.size(0)
     b, n, _ = input_tensor.shape
@@ -393,20 +389,31 @@ def search_linear_quantizer(input_quantizer, weight_quantizer, origin_output, x,
 
     input_expanded = input_tensor.unsqueeze(-1).expand(-1, -1, -1, num_combinations)  # [2048, 64, 60, C]
     weight_expanded = weight_tensor.unsqueeze(-1).expand(-1, -1, num_combinations)  # [180, 60, C]
+    
+    print('check0')
 
-    input_min_vals = compute_percentile(input_tensor, input_min)  # [1, 1, channels, C]
-    input_max_vals = compute_percentile(input_tensor, input_max)  # [1, 1, channels, C]
-    weight_min_vals = compute_percentile(weight_tensor, weight_min)  # [1, channels, C]
-    weight_max_vals = compute_percentile(weight_tensor, weight_max)  # [1, channels, C]
+    input_min_vals = compute_percentile(input_expanded, input_min)  # [1, 1, channels, C]
+    input_max_vals = compute_percentile(input_expanded, input_max)  # [1, 1, channels, C]
+    weight_min_vals = compute_percentile(weight_expanded, weight_min)  # [1, channels, C]
+    weight_max_vals = compute_percentile(weight_expanded, weight_max)  # [1, channels, C]
+
 
     input_quant = input_quantizer.quantize(input_expanded, input_min_vals, input_max_vals) # [2048, 64, 60, C]
     weight_quant = weight_quantizer.quantize(weight_expanded, weight_min_vals, weight_max_vals)  # [180, 60, C]
-
+    index = torch.arange(25).unsqueeze(-1).repeat(1, 25).reshape(-1)
+    input_quant = input_quant[..., index]
+    weight_quant =  weight_quant.unsqueeze(-2).expand(-1, -1, 25, 25)
+    weight_quant = weight_quant.reshape(*weight_quant.shape[:-2], -1)
+    num_combinations *= num_combinations
     input_quant = input_quant.view(-1, input_tensor.size(2), num_combinations) #[2048, 64, 60, C] -> [2048 * 64, 60, C]
-    weight_quant = weight_quant.permute(2, 1, 0)  # [C, 60, 180]
+    weight_quant = weight_quant.permute(2, 1, 0) # [C, 60, 180]
+    input_quant = input_quant.permute(2, 0, 1) #[C, 2048 * 64, 60]
+    print('check1')
+    output_quantized = batch_bmm(input_quant, weight_quant)
+    print('check1.5')
+    output_quantized = output_quantized.view(num_combinations, b, n, out_c).cuda() + bias # [C, 2048, 64, 180]
 
-    output_quantized = torch.bmm(input_quant.transpose(0, 2), weight_quant)
-    output_quantized = output_quantized.view(num_combinations, b, n, out_c) + bias  # [C, 2048, 64, 180]
+    print('check2')
 
     origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1) 
 
@@ -414,12 +421,14 @@ def search_linear_quantizer(input_quantizer, weight_quantizer, origin_output, x,
     loss = loss.mean(dim=(1, 2, 3))
 
     min_loss, best_idx = loss.min(dim=0)
+    print('check3')
 
     #weight_quantizer.weight.data = weight_quant[best_idx].transpose(0, 1)
     weight_quantizer.init_quantization_scale(weight_min_vals.reshape(num_combinations, -1)[best_idx],
                                              weight_max_vals.reshape(num_combinations, -1)[best_idx])
     input_quantizer.init_quantization_scale(input_min_vals.reshape(num_combinations, -1)[best_idx],
                                              input_max_vals.reshape(num_combinations, -1)[best_idx])
+    print('check4')
 
     return min_loss
 
@@ -442,17 +451,18 @@ def search_log2_linear_quantizer(input_quantizer, weight_quantizer, origin_outpu
     input_expanded = input_tensor.unsqueeze(-1).expand(-1, -1, -1, num_combinations)  # [2048, 64, 60, C]
     weight_expanded = weight_tensor.unsqueeze(-1).expand(-1, -1, num_combinations)  # [180, 60, C]
 
-    input_max_vals = compute_percentile(input_tensor, input_delta)  # [1, 1, channels, C]
-    weight_max_vals = compute_percentile(weight_tensor, weight_delta)  # [1, channels, C]
+    input_max_vals = compute_percentile(input_expanded, input_delta)  # [1, 1, channels, C]
+    weight_max_vals = compute_percentile(weight_expanded, weight_delta)  # [1, channels, C]
 
     input_quant = input_quantizer.quantize(input_expanded, input_max_vals) # [2048, 64, 60, C]
     weight_quant = weight_quantizer.quantize(weight_expanded, weight_max_vals)  # [180, 60, C]
 
     input_quant = input_quant.view(-1, input_tensor.size(2), num_combinations) #[2048, 64, 60, C] -> [2048 * 64, 60, C]
     weight_quant = weight_quant.permute(2, 1, 0)  # [C, 60, 180]
+    input_quant = input_quant.permute(2, 0, 1)
 
-    output_quantized = torch.bmm(input_quant.transpose(0, 2), weight_quant)
-    output_quantized = output_quantized.view(num_combinations, b, n, out_c) + bias  # [C, 2048, 64, 180]
+    output_quantized = batch_bmm(input_quant, weight_quant)
+    output_quantized = output_quantized.view(num_combinations, b, n, out_c).cuda() + bias # [C, 2048, 64, 180]
 
     origin_output = origin_output.clone().detach().unsqueeze(0).expand(num_combinations, -1, -1, -1) 
 
@@ -525,6 +535,9 @@ class List_Quantizers(nn.Module):
             if loss < best_score:
                 best_score = loss
                 self.quantizers_dict["best_module"] = module
+            print("finish one quantizer")
+        
+        print("finish one module")
 
 def quant_model(model, quant_params={}):
 
