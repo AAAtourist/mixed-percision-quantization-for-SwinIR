@@ -4,7 +4,7 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 0
-gpu: 0
+gpu: 2
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
@@ -16,7 +16,6 @@ quantization:
   weight_quant_params:
     n_bits: 
     channel_wise: True
-
 
 
 datasets:
