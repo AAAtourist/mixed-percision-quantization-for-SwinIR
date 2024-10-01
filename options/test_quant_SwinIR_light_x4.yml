@@ -4,18 +4,18 @@ model_type: SwinIRModel
 scale: 4
 num_gpu: 1
 manual_seed: 10
-gpu: 1
+gpu: 3
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x4.pth
 
 quantization:
+  bits_candidate: [2]
   input_quant_params:
-    n_bits: 4
-    channel_wise: False
-  weight_quant_params:
-    n_bits: 4
+    n_bits: 
     channel_wise: True
-
+  weight_quant_params:
+    n_bits: 
+    channel_wise: True
 
 
 datasets:

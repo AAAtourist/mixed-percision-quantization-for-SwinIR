@@ -639,7 +639,7 @@ def search_log2_linear_quantizer(input_quantizer, weight_quantizer, origin_outpu
 
 def create_quantizers(default_quant_params={}):
     quantizers = []
-    for i in [2, 3, 4, 8]:
+    for i in default_quant_params['bits_candidate']:
         #quant_param = {**default_quant_params, "n_bits": i}
         input_param = {**default_quant_params["input_quant_params"], "n_bits": i}
         weight_param = {**default_quant_params["weight_quant_params"], "n_bits": i}

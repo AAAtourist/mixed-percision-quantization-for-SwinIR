@@ -10,6 +10,7 @@ cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
 
 quantization:
+  bits_candidate: [2]
   input_quant_params:
     n_bits: 
     channel_wise: True
