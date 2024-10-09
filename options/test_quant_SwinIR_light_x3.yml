@@ -1,10 +1,10 @@
 # general settings
-name: test_SwinIR_light_x3_bit2_percentile_token_test
+name: test_SwinIR_light_x3_search_bit3
 model_type: SwinIRModel
 scale: 3
 num_gpu: 1
 manual_seed: 10
-gpu: 3
+gpu: 0
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x3.pth
 

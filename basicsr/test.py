@@ -5,6 +5,7 @@ import os
 
 from basicsr.data import build_dataloader, build_dataset
 from basicsr.models import build_model
+from basicsr.models.sr_model import List_Quantizers, QuantLinear
 from basicsr.utils import get_env_info, get_root_logger, get_time_str, make_exp_dirs
 from basicsr.utils.options import dict2str, parse_options
 
@@ -32,8 +33,43 @@ def test_pipeline(root_path):
         logger.info(f"Number of test images in {dataset_opt['name']}: {len(test_set)}")
         test_loaders.append(test_loader)
 
+    
+
     # create model
     model = build_model(opt)
+    n_l, n_m = 0, 0
+    for _, module in model.net_g.named_modules():
+        if not isinstance(module, List_Quantizers):
+            continue
+        if isinstance(module.quantizers_dict["best_module"], QuantLinear): #26, 53, 66, 70, 76, 77, 80, 89, 93, 95
+            if n_l in [53, 66, 70, 76, 77, 80]:
+                module.change_bit('uni', 2)
+            n_l += 1
+            
+
+    '''type_ = opt['quantization']['type']
+    is_uni = 'uni' if opt['uni'] else 'log'
+    number = opt['quantization']['number']
+    bit_ = opt['quantization']['bit']
+    n = 0
+
+    for _, module in model.net_g.named_modules():
+        if not isinstance(module, List_Quantizers):
+            continue
+        if isinstance(module.quantizers_dict["best_module"], QuantLinear):
+            if type_ == 'linear':
+                if n == number:
+                    print(f'linear{n}')
+                    module.change_bit(is_uni, bit_)
+                n += 1
+        elif type_ == 'matmul':
+            if n == number:
+                print(f'matmul{n}')
+                module.change_bit(is_uni, bit_)
+            n += 1'''
+
+
+
     for test_loader in test_loaders:
         test_set_name = test_loader.dataset.opt['name']
         logger.info(f'Testing {test_set_name}...')

@@ -1,16 +1,20 @@
 # general settings
-name: test_SwinIR_light_x2_log_bit4
+name: test_2bit
 model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 0
-gpu: 3
+gpu: 2
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
 
 quantization:
-  bits_candidate: [2]
+  number: 0
+  type: 'linear'
+  bit: 2
+  pretrained: True
+  bits_candidate: [2, 3, 4, 8]
   input_quant_params:
     n_bits: 
     channel_wise: True
@@ -18,8 +22,18 @@ quantization:
     n_bits: 
     channel_wise: True
 
-
 datasets:
+  test_1:  # the 4st test dataset
+    task: SR
+    name: Urban100
+    type: PairedImageDataset
+    dataroot_gt: /data/dataset/SR/benchmark/Urban100/HR
+    dataroot_lq: /data/dataset/SR/benchmark/Urban100/LR_bicubic/X2
+    filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
+
+dddatasets:
   test_1:  # the 1st test dataset
     task: SR
     name: Set5
@@ -91,7 +105,7 @@ path:
 
 # validation settings
 val:
-  save_img: True
+  save_img: False
   suffix: ~  # add suffix to saved images, if None, use exp name
   use_chop: False  # True to save memory, if img too large
 

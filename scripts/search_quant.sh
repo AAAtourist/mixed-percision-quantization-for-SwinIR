@@ -1,14 +1,26 @@
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=search_quant_x2_4bit quantization:bits_candidate=[4]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=search_quant_x2_3bit quantization:bits_candidate=[3]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=search_quant_x2_2bit quantization:bits_candidate=[2]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=search_quant_x2_8bit quantization:bits_candidate=[8]
-
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x3.yml --force_yml name=search_quant_x3_4bit quantization:bits_candidate=[4]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x3.yml --force_yml name=search_quant_x3_3bit quantization:bits_candidate=[3]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x3.yml --force_yml name=search_quant_x3_2bit quantization:bits_candidate=[2]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x3.yml --force_yml name=search_quant_x3_8bit quantization:bits_candidate=[8]
-
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x4.yml --force_yml name=search_quant_x4_4bit quantization:bits_candidate=[4]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x4.yml --force_yml name=search_quant_x4_3bit quantization:bits_candidate=[3]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x4.yml --force_yml name=search_quant_x4_2bit quantization:bits_candidate=[2]
-python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x4.yml --force_yml name=search_quant_x4_8bit quantization:bits_candidate=[8]
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_41_log_2 quantization:type='matmul' quantization:number=41 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_41_log_4 quantization:type='matmul' quantization:number=41 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_42_uni_2 quantization:type='matmul' quantization:number=42 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_42_uni_4 quantization:type='matmul' quantization:number=42 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_42_log_2 quantization:type='matmul' quantization:number=42 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_42_log_4 quantization:type='matmul' quantization:number=42 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_43_uni_2 quantization:type='matmul' quantization:number=43 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_43_uni_4 quantization:type='matmul' quantization:number=43 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_43_log_2 quantization:type='matmul' quantization:number=43 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_43_log_4 quantization:type='matmul' quantization:number=43 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_44_uni_2 quantization:type='matmul' quantization:number=44 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_44_uni_4 quantization:type='matmul' quantization:number=44 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_44_log_2 quantization:type='matmul' quantization:number=44 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_44_log_4 quantization:type='matmul' quantization:number=44 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_45_uni_2 quantization:type='matmul' quantization:number=45 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_45_uni_4 quantization:type='matmul' quantization:number=45 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_45_log_2 quantization:type='matmul' quantization:number=45 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_45_log_4 quantization:type='matmul' quantization:number=45 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_46_uni_2 quantization:type='matmul' quantization:number=46 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_46_uni_4 quantization:type='matmul' quantization:number=46 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_46_log_2 quantization:type='matmul' quantization:number=46 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_46_log_4 quantization:type='matmul' quantization:number=46 log=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_47_uni_2 quantization:type='matmul' quantization:number=47 uni=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_47_uni_4 quantization:type='matmul' quantization:number=47 uni=True quantization:bit=4
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_47_log_2 quantization:type='matmul' quantization:number=47 log=True quantization:bit=2
+python -u basicsr/test.py -opt options/test_quant_SwinIR_light_x2.yml --force_yml name=SwinIR_x2_search_bit3_matmul_47_log_4 quantization:type='matmul' quantization:number=47 log=True quantization:bit=4

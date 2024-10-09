@@ -168,6 +168,7 @@ class QuantLinear(nn.Linear):
         self.input_quantizer = input_quantizer
         self.weight_quantizer = weight_quantizer
         self.quant_weight = None
+        self.loss = None
 
         self.first_time = True
 
@@ -195,7 +196,8 @@ class QuantLinear(nn.Linear):
         else:
             print('search log')
             loss = search_log2_linear_quantizer(self.input_quantizer, self.weight_quantizer, origin_output, x, self.weight, self.bias)
-        
+        self.loss = loss
+
         return loss
 
 class QuantMatMul(nn.Module):
@@ -206,7 +208,7 @@ class QuantMatMul(nn.Module):
 
         self.quantizer_A = quantizer1
         self.quantizer_B = quantizer2
-
+        self.loss = None
         self.first_time = True
     
     def forward(self, A, B):
@@ -228,6 +230,7 @@ class QuantMatMul(nn.Module):
             loss = search_matmul_quantizer(self.quantizer_A, self.quantizer_B, origin_output, A, B)
         else:
             loss = search_log2_matmul_quantizer(self.quantizer_A, self.quantizer_B, origin_output, A, B)
+        self.loss = loss
 
         return loss
 
@@ -670,7 +673,6 @@ def create_quantizers(default_quant_params={}):
 class List_Quantizers(nn.Module):
     def __init__(self):
         super(List_Quantizers, self).__init__()
-
         self.quantizers_dict = {}
         self.need_search = True
 
@@ -694,13 +696,19 @@ class List_Quantizers(nn.Module):
             if name == "origin_module" or name == "best_module":
                 continue
             loss = module.search_best_setting(origin_output, *args)
-            if loss < best_score:
+            if loss < best_score and 'bit3' in name:
                 best_score = loss
                 self.quantizers_dict["best_module"] = module
                 best_name = name
             print("finish one quantizer")
         print(best_name)
         print("finish one module")
+
+    def change_bit(self, type_, bit):
+        print(type_)
+        print(bit)
+        self.quantizers_dict["best_module"] = self.quantizers_dict[f"{type_}_quantizer_bit{bit}"]
+
 
 def quant_model(model, quant_params={}):
 
@@ -735,7 +743,6 @@ def quant_model(model, quant_params={}):
                 new_m.bias = m.bias
 
                 linear_quantizers.append_quantizer(quantizer_info["name"], new_m)
-            linear_quantizers = linear_quantizers
             setattr(father_module, name[idx:], linear_quantizers)
         elif isinstance(m, MatMul):
             # Matmul Layer
@@ -778,18 +785,25 @@ class SRModel(BaseModel):
             self.load_network(self.net_g, load_path, self.opt['path'].get('strict_load_g', True), param_key)
 
         if 'quantization' in self.opt:
-            self.net_g = quant_model(
-                model = self.net_g,
-                quant_params=self.opt['quantization']
-                )
-            self.net_g = self.model_to_device(self.net_g)
-            self.cali_data = torch.load(opt['cali_data'])
-            with torch.no_grad():
-                print('Performing initial quantization ...')
-                self.feed_data(self.cali_data)
-                _ = self.net_g(self.lq)
-                print('initial quantization over ...')
+            if self.opt['quantization']['pretrained']:
+                path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_search_done.pth"
+                self.net_g = torch.load(path)
+                self.net_g = self.model_to_device(self.net_g)
+                self.print_network(self.net_g)
+            else:
+                self.net_g = quant_model(
+                    model = self.net_g,
+                    quant_params=self.opt['quantization']
+                    )
+                self.net_g = self.model_to_device(self.net_g)
+                self.cali_data = torch.load(opt['cali_data'])
+                with torch.no_grad():
+                    print('Performing initial quantization ...')
+                    self.feed_data(self.cali_data)
+                    _ = self.net_g(self.lq)
+                    print('initial quantization over ...')
 
+        #torch.save(self.net_g, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_search_done.pth")
         if self.is_train:
             self.init_training_settings()
 
