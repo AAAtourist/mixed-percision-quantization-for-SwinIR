@@ -163,7 +163,7 @@ class Log2Quantizer(nn.Module):
     def forward(self, x: torch.Tensor):
         sign_x = torch.sign(x)
         abs_x = torch.abs(x)
-
+        
         if self.inited is False:
             self.delta = self.init_quantization_scale(abs_x)
             self.inited = True
@@ -226,16 +226,6 @@ class QuantLinear(nn.Linear):
             self.first_time = False
             #draw_3d_plot(self.weight)
 
-        '''global num
-        if 'num' not in globals(): 
-            num = 0 
-        if num == 0:
-            weight = self.weight[:60, :]
-            save_path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/weight.pt"
-            # 确保目录存在
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-            torch.save(weight, save_path)'''
         #x = self.input_quantizer(x)
         w = self.weight_quantizer(self.weight)
         
