@@ -73,15 +73,19 @@ class Log2Quantizer(nn.Module):
     def quantize(self, x, delta):
         epsilon = 1e-8
         x = x.to(delta.device)
-        sign_x = torch.sign(x)
-        abs_x = torch.abs(x)      
-        safe_abs_x = torch.clamp(abs_x, min=epsilon)
-        x_int = torch.round(-1 * (safe_abs_x/delta).log2())
+
+        x_min = torch.min(x.detach()) - epsilon
+        x -= x_min
+
+        x_int = torch.round(-1 * (x / delta).log2())
+
         mask = x_int >= self.n_levels
         x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
-        x_float_q = 2**(-1 * torch.ceil(x_quant)) * delta
+
+        x_float_q = 2**(-1 * x_quant) * delta + x_min
+
         x_float_q[mask] = 0
-        x_float_q *= sign_x
+        
         return x_float_q
     
     def init_quantization_scale(self, delta):
@@ -129,13 +133,14 @@ class QuantLinear(nn.Linear):
     def __init__(self,
                  in_features,
                  out_features,
-                 input_quantizer=None,
-                 weight_quantizer=None):
+                 dic_input_quantizer=None,
+                 dic_weight_quantizer=None):
         super(QuantLinear, self).__init__(in_features, out_features)
 
         
-        self.input_quantizer = input_quantizer
-        self.weight_quantizer = weight_quantizer
+        self.dic_input_quantizer = dic_input_quantizer
+        self.dic_weight_quantizer = dic_weight_quantizer
+        self.bit = None
         self.quant_weight = None
 
         self.first_time = True
@@ -146,13 +151,11 @@ class QuantLinear(nn.Linear):
             print(f'one linear finish:{num_linear}')
             num_linear += 1
             self.first_time = False
-            self.quant_weight = self.weight_quantizer(self.weight)
+            self.quant_weight = self.dic_weight_quantizer["{self.bit}"](self.weight)
         
-        x = self.input_quantizer(x)
-        #w = self.weight_quantizer(self.weight)
+        x = self.dic_input_quantizer["{self.bit}"](x)
         
         out = F.linear(x, weight=self.quant_weight, bias=self.bias)
-        #out = F.linear(x, weight=self.weight, bias=self.bias)
 
         return out
 
@@ -169,12 +172,13 @@ class QuantLinear(nn.Linear):
 
 class QuantMatMul(nn.Module):
     def __init__(self, 
-                 quantizer1=None,
-                 quantizer2=None):
+                 dic_input_quantizer=None,
+                 dic_weight_quantizer=None):
         super(QuantMatMul, self).__init__()
 
-        self.quantizer_A = quantizer1
-        self.quantizer_B = quantizer2
+        self.dic_input_quantizer = dic_input_quantizer
+        self.dic_weight_quantizer = dic_weight_quantizer
+        self.bit = None
 
         self.first_time = True
     
@@ -185,8 +189,8 @@ class QuantMatMul(nn.Module):
             num_matmul += 1
             self.first_time = False
 
-        A = self.quantizer_A(A)
-        B = self.quantizer_B(B)
+        A = self.dic_input_quantizer["{self.bit}"](A)
+        B = self.dic_input_quantizer["{self.bit}"](B)
         
         out = A @ B
         return out
@@ -444,35 +448,21 @@ def search_log2_linear_quantizer(input_quantizer, weight_quantizer, origin_outpu
 
     return best_score
 
-def create_quantizers(default_quant_params={}):
-    quantizers = []
+def create_quantizers(need_log_quantizer, default_quant_params={}):
+    dic_input_q, dic_weight_q = [], []
     for i in default_quant_params['bits_candidate']:
-        #quant_param = {**default_quant_params, "n_bits": i}
         input_param = {**default_quant_params["input_quant_params"], "n_bits": i}
         weight_param = {**default_quant_params["weight_quant_params"], "n_bits": i}
-        #log_quant_param = {**default_quant_params, "n_bits": i, "log_quant": True}
 
-        uni_quantizer1 = UniformQuantizer(**input_param)
-        uni_quantizer2 = UniformQuantizer(**weight_param)
-
-        log_quantizer1 = Log2Quantizer(**input_param)
-        log_quantizer2 = Log2Quantizer(**weight_param)
-
-        uni_quantizer_name = f"uni_quantizer_bit{i}"
-        log_quantizer_name = f"log_quantizer_bit{i}"
-
-        quantizers.append({
-            "name": uni_quantizer_name,
-            "quantizer1": uni_quantizer1,
-            "quantizer2": uni_quantizer2
-        })
-        quantizers.append({
-            "name": log_quantizer_name,
-            "quantizer1": log_quantizer1,
-            "quantizer2": log_quantizer2
-        })
+        if need_log_quantizer:
+            dic_input_q.append({"log{i}": Log2Quantizer(**input_param)})
+            dic_input_q.append({"uni{i}": UniformQuantizer(**input_param)})
+        else:
+            dic_input_q.append({"{i}": UniformQuantizer(**input_param)})
+        
+        dic_weight_q.append({"{i}": UniformQuantizer(**weight_param)})
     
-    return quantizers
+    return dic_input_q, dic_weight_q
 
 class List_Quantizers(nn.Module):
     def __init__(self):
@@ -487,8 +477,9 @@ class List_Quantizers(nn.Module):
             origin_output = self.quantizers_dict["origin_module"](*args)
             self.module_search(origin_output, *args)
             self.need_search = False
+            return origin_output
 
-        return self.quantizers_dict["best_module"](*args)
+        return self.quantizers_dict["quant_module"](*args)
 
     def append_quantizer(self, name, module):
         self.quantizers_dict[name] = module
@@ -527,42 +518,35 @@ def quant_model(model, quant_params={}):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
 
+            need_log_quantizer = True if 'fc1' in name else 0
 
-            quantizers = create_quantizers(quant_params)
+            dic_input_q, dic_weight_q = create_quantizers(need_log_quantizer, quant_params)
+
+            new_m = QuantLinear(m.in_features, m.out_features, dic_input_q, dic_weight_q)
+            new_m.weight.data = m.weight.data
+            new_m.bias = m.bias
 
             linear_quantizers = List_Quantizers().cuda()
 
             linear_quantizers.append_quantizer("origin_module", m)
-            linear_quantizers.append_quantizer("best_module", m)
-            for quantizer_info in quantizers:
-                input_quantizer = quantizer_info["quantizer1"]
-                weight_quantizer = quantizer_info["quantizer2"]
-
-                new_m = QuantLinear(m.in_features, m.out_features, input_quantizer, weight_quantizer)
-                new_m.weight.data = m.weight.data
-                new_m.bias = m.bias
-
-                linear_quantizers.append_quantizer(quantizer_info["name"], new_m)
-            linear_quantizers = linear_quantizers
+            linear_quantizers.append_quantizer("quant_module", new_m)
+            
             setattr(father_module, name[idx:], linear_quantizers)
         elif isinstance(m, MatMul):
             # Matmul Layer
             idx = idx + 1 if idx != 0 else idx
 
-            quantizers = create_quantizers(quant_params)
+            need_log_quantizer = True if 'MatMul2' in name else 0
 
+            dic_input_q, dic_weight_q = create_quantizers(need_log_quantizer, quant_params)
+
+            new_m = QuantMatMul(dic_input_q, dic_weight_q)
+            
             matmul_quantizers = List_Quantizers().cuda()
 
             matmul_quantizers.append_quantizer("origin_module", m)
-            matmul_quantizers.append_quantizer("best_module", m)
-            for quantizer_info in quantizers:
-                quantizer1 = quantizer_info["quantizer1"]
-                quantizer2 = quantizer_info["quantizer2"]
+            matmul_quantizers.append_quantizer("quant_module", new_m)
 
-                new_m = QuantMatMul(quantizer1, quantizer2)
-
-                matmul_quantizers.append_quantizer(quantizer_info["name"], new_m)
-            #matmul_quantizers = matmul_quantizers.to(m.device)
             setattr(father_module, name[idx:], matmul_quantizers)
 
     return model
