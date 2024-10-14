@@ -182,7 +182,8 @@ class WindowAttention(nn.Module):
 
         x = self.MatMul2(attn, v).transpose(1, 2).reshape(b_, n, c)
         #x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
-        draw_pdf(x)
+        #draw_pdf(x)
+        #draw_3d_plot(x)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x

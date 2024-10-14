@@ -11,10 +11,10 @@ def draw_plot(weight):
     if 'num' not in globals(): 
         num = 0 
     
-    if num == 1:
+    '''if num == 1:
         save_path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/large_tensor.pt"
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        torch.save(weight, save_path)
+        torch.save(weight, save_path)'''
     weight = torch.abs(weight)
     if weight.is_cuda:
         weight = weight.cpu().numpy()
@@ -24,7 +24,7 @@ def draw_plot(weight):
     name = dic[num % 4]
     '''
 
-    save_folder = f'/data/user/tourist/mixed-percision-quantization-for-SwinIR/3d_plot/input_qkv_datas'
+    save_folder = f'/data/user/tourist/mixed-percision-quantization-for-SwinIR/3d_plot/input_proj'
 
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
@@ -73,7 +73,7 @@ def draw_plot(weight):
 
 def draw_3d_plot(x):
 
-    sampling_probability = 0.1
+    sampling_probability = 0.01
     data = x
     #data = torch.max(x, dim=0)[0]
     num_channels = data.shape[-1]
