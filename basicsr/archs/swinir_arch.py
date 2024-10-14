@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
+from basicsr.draw_3d_plot import draw_3d_plot
 from basicsr.utils.registry import ARCH_REGISTRY
 from .arch_util import to_2tuple, trunc_normal_
 from ..draw_PDF import draw_pdf
@@ -155,6 +156,8 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         b_, n, c = x.shape
+        #draw_3d_plot(x)
+        #draw_pdf(x)
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, c // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
@@ -179,6 +182,7 @@ class WindowAttention(nn.Module):
 
         x = self.MatMul2(attn, v).transpose(1, 2).reshape(b_, n, c)
         #x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
+        draw_pdf(x)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
