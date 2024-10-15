@@ -4,7 +4,7 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 0
-gpu: 3
+gpu: 1
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
