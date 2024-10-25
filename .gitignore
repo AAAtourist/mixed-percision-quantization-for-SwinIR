@@ -6,6 +6,7 @@ experiments/*
 results/*
 tb_logger/*
 wandb/*
+basicsr/wandb/*
 tmp/*
 visual/*
 draw_plot_dataset/*
