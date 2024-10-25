@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import torch
+import wandb
 
 def draw_plot(weight):
 
@@ -11,11 +12,7 @@ def draw_plot(weight):
     if 'num' not in globals(): 
         num = 0 
     
-    '''if num == 1:
-        save_path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/large_tensor.pt"
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        torch.save(weight, save_path)'''
-    weight = torch.abs(weight)
+    weight = torch.abs(weight).detach()
     if weight.is_cuda:
         weight = weight.cpu().numpy()
     else:
@@ -24,13 +21,10 @@ def draw_plot(weight):
     name = dic[num % 4]
     '''
 
-    save_folder = f'/data/user/tourist/mixed-percision-quantization-for-SwinIR/3d_plot/input_proj'
 
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
 
-    input_channels = weight.shape[0]
-    output_channels = weight.shape[1]
+    input_channels = weight.shape[0]#60
+    output_channels = weight.shape[1]#180
 
     X = np.arange(output_channels)
     Y = np.arange(input_channels)
@@ -62,20 +56,16 @@ def draw_plot(weight):
 
     ax.text2D(0.05, 0.95, "X", transform=ax.transAxes, fontsize=15, weight='bold')
     plt.title(f'input_sampled{num}', fontsize=12)
+    wandb.log({f"3D_plot{num}": wandb.Image(plt)})
+    #plt.show()
 
-    save_path = os.path.join(save_folder, f'input_sampled{num}.png')
+    #save_path = os.path.join(save_folder, f'input_sampled{num}.png')
     num += 1
 
-    plt.savefig(save_path)
     plt.close(fig)
 
-    print(f'img saved : {save_path}')
 
 def draw_3d_plot(x):
-    save_path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/xweight.pt"
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    torch.save(x, save_path)
-    print("jkfdjfkdjkf")
 
     sampling_probability = 0.01
     data = x

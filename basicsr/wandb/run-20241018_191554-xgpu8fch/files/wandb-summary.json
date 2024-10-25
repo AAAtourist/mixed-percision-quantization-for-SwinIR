@@ -1,0 +1,1 @@
+{"_timestamp":1.7292501739027495e+09,"Ortho Loss":593.477294921875,"Total Loss":20222.48046875,"Range Loss XA":0.03453909978270531,"quant_loss":55.638092041015625,"_runtime":15.543093267,"smooth_losses_XA":358.64501953125,"smooth_losses_BW":25.841327667236328,"Range Loss BW":1.1182276466570329e-05,"_wandb":{"runtime":51},"_step":399,"epoch":199}
