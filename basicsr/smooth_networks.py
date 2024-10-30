@@ -212,7 +212,7 @@ class smooth_network(nn.Module):
         #                                        weight_range=20, weight_ortho=10, learning_rate=0.02)
 
     def process_activation(self, X): 
-        X = X.reshape(-1, 64, X.shape[-1])
+        X = X.reshape(-1, 64, X.shape[-1]).detach()
         statistics = compute_channel_statistics(X)  # [batch_size, 120]
         group_labels = assign_groups(statistics, self.kmeans)  # [batch_size]
 

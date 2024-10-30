@@ -75,18 +75,17 @@ class SRModel(BaseModel):
             param_key = self.opt['pathFP'].get('param_key_FP', 'params')
             self.load_network(self.net_Q, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
 
-        if 'quantization' in self.opt:
-            self.net_Q = quant_model(
-                model = self.net_Q,
-                quant_params=self.opt['quantization']
-                )
-            self.net_Q = self.model_to_device(self.net_Q)
-            self.cali_data = torch.load(opt['cali_data'])
-            with torch.no_grad():
-                print('Performing initial quantization ...')
-                self.feed_data(self.cali_data)
-                _ = self.net_Q(self.lq)
-                print('initial quantization over ...')
+        self.net_Q = quant_model(
+            model = self.net_Q,
+            quant_params=self.opt['quantization']
+            )
+        self.net_Q = self.model_to_device(self.net_Q)
+        self.cali_data = torch.load(opt['cali_data'])
+        with torch.no_grad():
+            print('Performing initial quantization ...')
+            self.feed_data(self.cali_data)
+            _ = self.net_Q(self.lq)
+            print('initial quantization over ...')
 
         if self.is_train:
             self.init_training_settings()
@@ -124,12 +123,17 @@ class SRModel(BaseModel):
         optim_matrix_params = []
         logger = get_root_logger()
 
-        for name, module in self.net_Q.named_parameters():
+        for name, module in self.net_Q.named_modules():
             if isinstance(module, QuantLinear) and module.smooth_network is not None:
+                print(f'find a module with smooth network:{name}')
                 module.train()
 
                 net1 = module.smooth_network
-                optim_matrix_params.append(net1)
+                #optim_matrix_params.append(*net1.A_matrices)
+                #optim_matrix_params.append(*net1.B_matrices)
+                optim_matrix_params.extend(net1.A_matrices)
+                optim_matrix_params.extend(net1.B_matrices)
+
                 logger.info(f'{name} is added in optim_matrix_params')
                 
         optim_type = train_opt['optim_matrix_params'].pop('type')

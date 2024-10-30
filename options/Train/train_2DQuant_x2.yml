@@ -3,21 +3,28 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 3407
-gpu: 0
-bit: 2
-cali_data: keydata/cali_data_x2.pth
+gpu: 3
+cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 quant:
   hook_per_layer: True
   hook_per_block: False
 
+quantization:
+  bits_candidate: [2]
+  input_quant_params:
+    n_bits: 
+    channel_wise: True
+  weight_quant_params:
+    n_bits: 
+    channel_wise: True
 # dataset and data loader settings
 datasets:
   train:
     task: SR
     name: DF2K
     type: PairedImageDataset
-    dataroot_gt: datasets/DF2K/HR
-    dataroot_lq: datasets/DF2K/LR_bicubic/X2
+    dataroot_gt: /data/dataset/SR/DF2K/HR
+    dataroot_lq: /data/dataset/SR/DF2K/LR_bicubic/X2
     filename_tmpl: "{}x2"
     io_backend:
       type: disk
@@ -39,8 +46,8 @@ datasets:
     task: SR
     name: Set5
     type: PairedImageDataset
-    dataroot_gt: datasets/benchmark/Set5/HR
-    dataroot_lq: datasets/benchmark/Set5/LR_bicubic/X2
+    dataroot_gt: /data/dataset/SR/benchmark/Set5/HR
+    dataroot_lq: /data/dataset/SR/benchmark/Set5/LR_bicubic/X2
     filename_tmpl: "{}x2"
     io_backend:
       type: disk
@@ -70,7 +77,7 @@ path:
 
 # training settings
 train:
-  optim_bound:
+  optim_matrix_params:
     type: Adam
     lr: !!float 1e-2
     weight_decay: 0

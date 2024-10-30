@@ -191,6 +191,7 @@ class QuantLinear(nn.Linear):
 
     def forward(self, x):
         if self.first_time:
+            self.search_best_setting(x)
             self.quant_weight = self.dic_weight_quantizer[f"{self.bit}"](self.weight)
             self.first_time = False
 
@@ -211,7 +212,7 @@ class QuantLinear(nn.Linear):
 
         return out
 
-    def search_best_setting(self, origin_output, x):
+    def search_best_setting(self, x):
         print('start linear search')
         if self.need_smooth:
             global num_sm
@@ -222,7 +223,7 @@ class QuantLinear(nn.Linear):
             with torch.enable_grad():
                 self.smooth_network = smooth_network(self.weight.T, 20)
                 self.smooth_network.inited(x)
-            XA, BW = self.smooth_network(x)
+            XA, BW, _ = self.smooth_network(x)
             self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(XA) #per-tensor
             self.dic_weight_quantizer[f"{self.bit}"].init_quantization_scale(BW)
             
@@ -245,13 +246,16 @@ class QuantMatMul(nn.Module):
         self.first_time = True
     
     def forward(self, A, B):
+        if self.first_time:
+            self.search_best_setting(A, B)
+            self.first_time = False
 
         A = self.dic_input_quantizer[f"{self.bit}"](A)
         B = self.dic_weight_quantizer[f"{self.bit}"](B)
         out = A @ B
         return out
 
-    def search_best_setting(self, origin_output, A, B):
+    def search_best_setting(self, A, B):
         print('start matmul search')
         
         self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(A, True)
@@ -327,17 +331,18 @@ class qkv_module(nn.Module):
         #self.new_k = QuantLinear(self.features, self.features, dic_input_k, dic_weight_k, True).cuda()
         self.new_v = QuantLinear(self.features, self.features, dic_input_v, dic_weight_v, True).cuda()
 
-        self.new_qk.bias = nn.Parameter(bias[:self.features * 2], requires_grad=True)
+        self.new_qk.bias = nn.Parameter(bias[:self.features * 2])
         #self.new_q.bias = nn.Parameter(bias[:self.features])
         #self.new_k.bias = nn.Parameter(bias[self.features : 2 * self.features])
         self.new_v.bias = nn.Parameter(bias[2 * self.features : 3 * self.features])
 
-        self.new_qk.weight.data = nn.Parameter(weight[:self.features * 2, :], requires_grad=True)
+        self.new_qk.weight.data = nn.Parameter(weight[:self.features * 2, :])
         #self.new_q.weight.data = nn.Parameter(weight[: self.features, :])
         #self.new_k.weight.data = nn.Parameter(weight[self.features : 2 * self.features, :])
         self.new_v.weight.data = nn.Parameter(weight[2 * self.features : 3 * self.features, :])
 
     def forward(self, x):
+
         outqk = self.new_qk(x)
         #outq = self.new_q(x)
         #outk = self.new_k(x)
@@ -345,11 +350,6 @@ class qkv_module(nn.Module):
 
         return torch.cat((outqk, outv), dim=-1)
 
-    def search_best_setting(self, origin_output, x):
-        self.new_qk.search_best_setting(origin_output, x)
-        #self.new_q.search_best_setting(origin_output, x)
-        #self.new_k.search_best_setting(origin_output, x)
-        self.new_v.search_best_setting(origin_output, x)
 
 def quant_model(model, quant_params={}):
 
@@ -369,8 +369,8 @@ def quant_model(model, quant_params={}):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
 
-            #need_smooth = True if 'qkv' in name or 'proj' in name else False
-            need_smooth = True
+            need_smooth = True if 'qkv' in name or 'proj' in name else False
+            #need_smooth = True
             if 'qkv' in name:
                 new_m = qkv_module(m, quant_params)
             else:
