@@ -1,8 +1,11 @@
 import itertools
+from typing import Tuple
 import torch
 from collections import OrderedDict
 from os import path as osp
 from tqdm import tqdm
+from torch.nn import Module
+from torch import Tensor
 
 from basicsr.archs import build_network
 from basicsr.losses import build_loss
@@ -52,51 +55,46 @@ class SRModel(BaseModel):
         super(SRModel, self).__init__(opt)
 
         # define network
-        self.net_g = build_network(opt['network_g'])
-        self.net_g = self.model_to_device(self.net_g)
-        self.print_network(self.net_g)
+        self.net_F = build_network(opt["network_Q"])
+        self.net_F = self.model_to_device(self.net_F)
+        #self.print_network(self.net_F)
 
         # load pretrained models
-        load_path = self.opt['path'].get('pretrain_network_g', None)
+        load_path = self.opt['pathFP'].get('pretrain_network_FP', None)
         if load_path is not None:
-            param_key = self.opt['path'].get('param_key_g', 'params')
-            self.load_network(self.net_g, load_path, self.opt['path'].get('strict_load_g', True), param_key)
+            param_key = self.opt['pathFP'].get('param_key_FP', 'params')
+            self.load_network(self.net_F, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
+
+        self.net_Q = build_network(opt["network_Q"])
+        self.net_Q = self.model_to_device(self.net_Q)
+        #self.print_network(self.net_F)
+
+        # load pretrained models
+        load_path = self.opt['pathFP'].get('pretrain_network_FP', None)
+        if load_path is not None:
+            param_key = self.opt['pathFP'].get('param_key_FP', 'params')
+            self.load_network(self.net_Q, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
 
         if 'quantization' in self.opt:
-            self.net_g = quant_model(
-                model = self.net_g,
+            self.net_Q = quant_model(
+                model = self.net_Q,
                 quant_params=self.opt['quantization']
                 )
-            self.net_g = self.model_to_device(self.net_g)
+            self.net_Q = self.model_to_device(self.net_Q)
             self.cali_data = torch.load(opt['cali_data'])
             with torch.no_grad():
                 print('Performing initial quantization ...')
                 self.feed_data(self.cali_data)
-                _ = self.net_g(self.lq)
+                _ = self.net_Q(self.lq)
                 print('initial quantization over ...')
 
         if self.is_train:
             self.init_training_settings()
 
     def init_training_settings(self):
-        self.net_g.train()
+        self.net_F.eval()
+        self.net_Q.eval()
         train_opt = self.opt['train']
-
-        self.ema_decay = train_opt.get('ema_decay', 0)
-        if self.ema_decay > 0:
-            logger = get_root_logger()
-            logger.info(f'Use Exponential Moving Average with decay: {self.ema_decay}')
-            # define network net_g with Exponential Moving Average (EMA)
-            # net_g_ema is used only for testing on one GPU and saving
-            # There is no need to wrap with DistributedDataParallel
-            self.net_g_ema = build_network(self.opt['network_g']).to(self.device)
-            # load pretrained model
-            load_path = self.opt['path'].get('pretrain_network_g', None)
-            if load_path is not None:
-                self.load_network(self.net_g_ema, load_path, self.opt['path'].get('strict_load_g', True), 'params_ema')
-            else:
-                self.model_ema(0)  # copy net_g weight
-            self.net_g_ema.eval()
 
         # define losses
         if train_opt.get('pixel_opt'):
@@ -104,40 +102,95 @@ class SRModel(BaseModel):
         else:
             self.cri_pix = None
 
-        if train_opt.get('perceptual_opt'):
-            self.cri_perceptual = build_loss(train_opt['perceptual_opt']).to(self.device)
+        if train_opt.get('feature_loss'):
+            self.feature_loss = build_loss(train_opt['feature_loss']).to(self.device)
         else:
-            self.cri_perceptual = None
+            self.feature_loss = None
 
-        if self.cri_pix is None and self.cri_perceptual is None:
-            raise ValueError('Both pixel and perceptual losses are None.')
+        if self.cri_pix is None and self.feature_loss is None:
+            raise ValueError('Both pixel and feature_loss are None.')
 
         # set up optimizers and schedulers
         self.setup_optimizers()
         self.setup_schedulers()
+        self.build_hooks_on_Q_and_F()
+        self.build_hooks_on_smooth_networks()
+        
 
     def setup_optimizers(self):
-        train_opt = self.opt['train']
-        optim_params = []
-        for k, v in self.net_g.named_parameters():
-            if v.requires_grad:
-                optim_params.append(v)
-            else:
-                logger = get_root_logger()
-                logger.warning(f'Params {k} will not be optimized.')
+        from basicsr.quantize import QuantLinear, qkv_module
 
-        optim_type = train_opt['optim_g'].pop('type')
-        self.optimizer_g = self.get_optimizer(optim_type, optim_params, **train_opt['optim_g'])
-        self.optimizers.append(self.optimizer_g)
+        train_opt = self.opt['train']
+        optim_matrix_params = []
+        logger = get_root_logger()
+
+        for name, module in self.net_Q.named_parameters():
+            if isinstance(module, QuantLinear) and module.smooth_network is not None:
+                module.train()
+
+                net1 = module.smooth_network
+                optim_matrix_params.append(net1)
+                logger.info(f'{name} is added in optim_matrix_params')
+                
+        optim_type = train_opt['optim_matrix_params'].pop('type')
+        self.optimizer_matrix = self.get_optimizer(optim_type, optim_matrix_params, **train_opt['optim_matrix_params'])
+        self.optimizers.append(self.optimizer_matrix)
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device)
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
 
+    def build_hooks_on_Q_and_F(self):
+        from basicsr.archs.swinir_arch import BasicLayer, SwinTransformerBlock
+
+        self.feature_F = []
+        self.feature_Q = []
+
+        if self.opt["quant"]["hook_per_layer"]:
+            hook_type = BasicLayer
+        elif self.opt["quant"]["hook_per_block"]:
+            hook_type = SwinTransformerBlock
+
+        def hook_layer_forward(
+            module: Module, input: Tensor, output: Tensor, buffer: list
+        ):
+            buffer.append(output)
+
+        for name, module in self.net_F.named_modules():
+            if isinstance(module, hook_type):
+                module.register_forward_hook(
+                    partial(hook_layer_forward, buffer=self.feature_F)
+                )
+        for name, module in self.net_Q.named_modules():
+            if isinstance(module, hook_type):
+                module.register_forward_hook(
+                    partial(hook_layer_forward, buffer=self.feature_Q)
+                )
+
+    def build_hooks_on_smooth_networks(self):
+        from basicsr.quantize import QuantLinear, qkv_module
+
+        self.smooth_loss = []
+        def hook_smooth_network_loss(
+            module: Module, input: Tensor, output: Tuple[Tensor, ...], buffer: list
+        ):
+            buffer.append(output[-1])
+
+        for name, module in self.net_Q.named_modules():
+            if isinstance(module, QuantLinear) and module.smooth_network is not None:
+                module.register_forward_hook(
+                    partial(hook_smooth_network_loss, buffer=self.smooth_loss)
+                )
+                
     def optimize_parameters(self, current_iter):
-        self.optimizer_g.zero_grad()
-        self.output = self.net_g(self.lq)
+        self.feature_Q.clear()
+        self.feature_F.clear()
+        self.smooth_loss.clear()
+
+        self.output_Q = self.net_Q(self.lq)
+        with torch.no_grad():
+            self.output_F = self.net_F(self.lq)
 
         l_total = 0
         loss_dict = OrderedDict()
@@ -146,16 +199,31 @@ class SRModel(BaseModel):
             l_pix = self.cri_pix(self.output, self.gt)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
-        # perceptual loss
-        if self.cri_perceptual:
-            l_percep, l_style = self.cri_perceptual(self.output, self.gt)
-            if l_percep is not None:
-                l_total += l_percep
-                loss_dict['l_percep'] = l_percep
-            if l_style is not None:
-                l_total += l_style
-                loss_dict['l_style'] = l_style
 
+        # feature loss
+        if self.feature_loss:
+            l_feature = 0
+            idx = 0
+            for feature_q, feature_f in zip(self.feature_Q, self.feature_F):
+                norm_q = torch.norm(feature_q, dim=(1, 2)).detach()
+                norm_f = torch.norm(feature_f, dim=(1, 2)).detach()
+
+                norm_q.unsqueeze_(1).unsqueeze_(2)
+                norm_f.unsqueeze_(1).unsqueeze_(2)
+
+                feature_q = feature_q / norm_q
+                feature_f = feature_f / norm_f
+
+                fi = self.feature_loss(feature_q, feature_f) / feature_q.numel()
+
+                loss_dict[f'l_feature_{idx}'] = fi
+                l_feature += fi
+                idx += 1
+            
+            loss_dict['l_feature'] = l_feature
+            l_total += l_feature
+
+        self.optimizer_matrix.zero_grad()
         l_total.backward()
         self.optimizer_g.step()
 
@@ -165,63 +233,129 @@ class SRModel(BaseModel):
             self.model_ema(decay=self.ema_decay)
 
     def test(self):
-        if hasattr(self, 'net_g_ema'):
-            self.net_g_ema.eval()
-            with torch.no_grad():
-                self.output = self.net_g_ema(self.lq)
+        # pad to multiplication of window_size
+        # we do not use self-ensamble.
+        if not self.opt['quant'].get('self_ensamble', False):
+            
+            window_size = self.opt["network_Q"]["window_size"]
+            scale = self.opt.get("scale", 1)
+            mod_pad_h, mod_pad_w = 0, 0
+            _, _, h, w = self.lq.size()
+            if h % window_size != 0:
+                mod_pad_h = window_size - h % window_size
+            if w % window_size != 0:
+                mod_pad_w = window_size - w % window_size
+            # img = F.pad(self.lq, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
+            # 修改（按源码）
+            img = self.lq
+            img = torch.cat([img, torch.flip(img, [2])], 2)[:, :, : h + mod_pad_h, :]
+            img = torch.cat([img, torch.flip(img, [3])], 3)[:, :, :, : w + mod_pad_w]
+            
+            if self.opt['quant'].get('bicubic', False):
+                # print(img.size())
+                # exit(0)
+                resize = Resize((img.size(2) * self.opt['network_Q']['upscale'], img.size(3) * self.opt['network_Q']['upscale']))
+                self.output = resize(img)
+            elif self.opt['quant'].get('fp_test', False):
+                self.net_F.eval()
+                with torch.no_grad():
+                    self.output = self.net_F(img)
+            else:
+                if hasattr(self, "net_g_ema"):
+                    self.net_g_ema.eval()
+                    with torch.no_grad():
+                        self.output = self.net_g_ema(img)
+                else:
+                    self.net_Q.eval()
+                    with torch.no_grad():
+                        self.output = self.net_Q(img)
+                    self.net_Q.eval()
+
+            _, _, h, w = self.output.size()
+            self.output = self.output[
+                :, :, 0 : h - mod_pad_h * scale, 0 : w - mod_pad_w * scale
+            ]
         else:
-            self.net_g.eval()
-            with torch.no_grad():
-                self.output = self.net_g(self.lq)
-            self.net_g.train()
+            transforms = [
+                (lambda x: x, lambda y: y),  # No-op
+                (lambda x: x.flip(2), lambda y: y.flip(2)),  # Vertical flip
+                (lambda x: x.flip(3), lambda y: y.flip(3)),  # Horizontal flip
+                (lambda x: x.flip(2).flip(3), lambda y: y.flip(2).flip(3)),  # Vertical + Horizontal flip
+                (lambda x: x.transpose(2, 3), lambda y: y.transpose(2, 3)),  # Rotate 90 degrees
+                (lambda x: x.transpose(2, 3).flip(2), lambda y: y.flip(2).transpose(2, 3)),  # Rotate 90 degrees + Vertical flip
+                (lambda x: x.transpose(2, 3).flip(3), lambda y: y.flip(3).transpose(2, 3)),  # Rotate 90 degrees + Horizontal flip
+                (lambda x: x.transpose(2, 3).flip(2).flip(3), lambda y: y.flip(2).flip(3).transpose(2, 3))  # Rotate 90 degrees + Vertical + Horizontal flip
+            ]
+            window_size = self.opt["network_Q"]["window_size"]
+            scale = self.opt.get("scale", 1)
+            mod_pad_h, mod_pad_w = 0, 0
+            _, _, h, w = self.lq.size()
+            if h % window_size != 0:
+                mod_pad_h = window_size - h % window_size
+            if w % window_size != 0:
+                mod_pad_w = window_size - w % window_size
+            # img = F.pad(self.lq, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
+            # 修改（按源码）
+            # real_outputs = []
+            inputs = []
+            
+            for transform, inverse_transform in transforms:
+                img = self.lq
+                img = torch.cat([img, torch.flip(img, [2])], 2)[:, :, : h + mod_pad_h, :]
+                img = torch.cat([img, torch.flip(img, [3])], 3)[:, :, :, : w + mod_pad_w]
+                inputs.append(transform(img))
+                # print(img.size())
+            batch_input_1 = torch.cat(inputs[:4], dim=0)
+            batch_input_2 = torch.cat(inputs[4:], dim=0)
+            
+            if hasattr(self, "net_g_ema"):
+                self.net_g_ema.eval()
+                with torch.no_grad():
+                    output1 = self.net_g_ema(batch_input_1)
+            else:
+                self.net_Q.eval()
+                with torch.no_grad():
+                    output1 = self.net_Q(batch_input_1)
+            if hasattr(self, "net_g_ema"):
+                self.net_g_ema.eval()
+                with torch.no_grad():
+                    output2 = self.net_g_ema(batch_input_2)
+            else:
+                self.net_Q.eval()
+                with torch.no_grad():
+                    output2 = self.net_Q(batch_input_2)
+                # real_outputs.append(output)
+            # output = output1 + output2
+            # output = torch.cat([output1, output2], dim=0)
+            outputs1 = torch.chunk(output1, len(transforms), dim=0)
+            outputs2 = torch.chunk(output2, len(transforms), dim=0)
+            outputs = outputs1 + outputs2
+            inverse_transformed_outputs = []
+            for output, (_, inv_transform) in zip(outputs, transforms):
+                inv_output = inv_transform(output)
+                _, _, h_out, w_out = inv_output.size()
+                cropped_output = inv_output[:, :, 0: h_out - mod_pad_h * scale, 0: w_out - mod_pad_w * scale]
+                inverse_transformed_outputs.append(cropped_output)
+                
+            # Compute the mean of all the processed outputs
+            final_output = torch.mean(torch.stack(inverse_transformed_outputs), dim=0)
+            self.output = final_output
+            return final_output
 
-    def test_selfensemble(self):
-        # TODO: to be tested
-        # 8 augmentations
-        # modified from https://github.com/thstkdgus35/EDSR-PyTorch
 
-        def _transform(v, op):
-            # if self.precision != 'single': v = v.float()
-            v2np = v.data.cpu().numpy()
-            if op == 'v':
-                tfnp = v2np[:, :, :, ::-1].copy()
-            elif op == 'h':
-                tfnp = v2np[:, :, ::-1, :].copy()
-            elif op == 't':
-                tfnp = v2np.transpose((0, 1, 3, 2)).copy()
+    def validation(self, dataloader, current_iter, tb_logger, save_img=False):
+        """Validation function.
 
-            ret = torch.Tensor(tfnp).to(self.device)
-            # if self.precision == 'half': ret = ret.half()
-
-            return ret
-
-        # prepare augmented data
-        lq_list = [self.lq]
-        for tf in 'v', 'h', 't':
-            lq_list.extend([_transform(t, tf) for t in lq_list])
-
-        # inference
-        if hasattr(self, 'net_g_ema'):
-            self.net_g_ema.eval()
-            with torch.no_grad():
-                out_list = [self.net_g_ema(aug) for aug in lq_list]
+        Args:
+            dataloader (torch.utils.data.DataLoader): Validation dataloader.
+            current_iter (int): Current iteration.
+            tb_logger (tensorboard logger): Tensorboard logger.
+            save_img (bool): Whether to save images. Default: False.
+        """
+        if self.opt["dist"]:
+            self.dist_validation(dataloader, current_iter, tb_logger, save_img)
         else:
-            self.net_g.eval()
-            with torch.no_grad():
-                out_list = [self.net_g_ema(aug) for aug in lq_list]
-            self.net_g.train()
-
-        # merge results
-        for i in range(len(out_list)):
-            if i > 3:
-                out_list[i] = _transform(out_list[i], 't')
-            if i % 4 > 1:
-                out_list[i] = _transform(out_list[i], 'h')
-            if (i % 4) % 2 == 1:
-                out_list[i] = _transform(out_list[i], 'v')
-        output = torch.cat(out_list, dim=0)
-
-        self.output = output.mean(dim=0, keepdim=True)
+            self.nondist_validation(dataloader, current_iter, tb_logger, save_img)
 
     def dist_validation(self, dataloader, current_iter, tb_logger, save_img):
         if self.opt['rank'] == 0:
@@ -318,8 +452,6 @@ class SRModel(BaseModel):
         return out_dict
 
     def save(self, epoch, current_iter):
-        if hasattr(self, 'net_g_ema'):
-            self.save_network([self.net_g, self.net_g_ema], 'net_g', current_iter, param_key=['params', 'params_ema'])
-        else:
-            self.save_network(self.net_g, 'net_g', current_iter)
+        """Save networks and training state."""
+        self.save_network(self.net_Q, "net_Q", current_iter)
         self.save_training_state(epoch, current_iter)

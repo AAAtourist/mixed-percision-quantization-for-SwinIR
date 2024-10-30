@@ -197,7 +197,7 @@ class QuantLinear(nn.Linear):
         if self.need_smooth:
             origin_shape = x.shape[:-1]
             x = x.reshape(-1, 64, x.shape[-1])
-            XA, BW = self.smooth_network(x)
+            XA, BW, _ = self.smooth_network(x)
             quant_XA = self.dic_input_quantizer[f"{self.bit}"](XA)
             quant_BW = self.dic_weight_quantizer[f"{self.bit}"](BW)
             #quant_XA = XA
@@ -217,7 +217,7 @@ class QuantLinear(nn.Linear):
             global num_sm
             if 'num_sm' not in globals():
                 num_sm = 0
-            print(f'start smooth network {num_sm}')
+            print(f'start cali smooth network {num_sm}')
 
             with torch.enable_grad():
                 self.smooth_network = smooth_network(self.weight.T, 20)
@@ -226,7 +226,7 @@ class QuantLinear(nn.Linear):
             self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(XA) #per-tensor
             self.dic_weight_quantizer[f"{self.bit}"].init_quantization_scale(BW)
             
-            print(f'finish smooth network {num_sm}')
+            print(f'finish cali smooth network {num_sm}')
             num_sm += 1
         else:
             self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(x, True)
@@ -274,11 +274,11 @@ def create_quantizers(need_log_quantizer=False, default_quant_params={}):
     
     return dic_input_q, dic_weight_q
 
-class List_Quantizers(nn.Module):
+'''class List_Quantizers(nn.Module):
     def __init__(self, name):
         super(List_Quantizers, self).__init__()
 
-        self.quant_module_dict = {}
+        self.quant_module_dict = nn.ModuleDict()
         self.need_search = True
         self.name = name
 
@@ -308,7 +308,7 @@ class List_Quantizers(nn.Module):
 
         print(f"finish one module{num_module}")
         num_module += 1
-
+'''
 class qkv_module(nn.Module):
     def __init__(self, origin_linear=None, quant_params={}):
         super(qkv_module, self).__init__()
@@ -351,7 +351,6 @@ class qkv_module(nn.Module):
         #self.new_k.search_best_setting(origin_output, x)
         self.new_v.search_best_setting(origin_output, x)
 
-
 def quant_model(model, quant_params={}):
 
     module_dict={}
@@ -381,12 +380,12 @@ def quant_model(model, quant_params={}):
                 new_m.weight.data = m.weight.data
                 new_m.bias = m.bias
 
-            linear_quantizers = List_Quantizers(name).cuda()
+            '''linear_quantizers = List_Quantizers(name).cuda()
 
             linear_quantizers.append_quantizer("origin_module", m)
-            linear_quantizers.append_quantizer("quant_module", new_m)
+            linear_quantizers.append_quantizer("quant_module", new_m)'''
             
-            setattr(father_module, name[idx:], linear_quantizers)
+            setattr(father_module, name[idx:], new_m)
         elif isinstance(m, MatMul):
             # Matmul Layer
             idx = idx + 1 if idx != 0 else idx
@@ -397,11 +396,11 @@ def quant_model(model, quant_params={}):
 
             new_m = QuantMatMul(dic_input_q, dic_weight_q).cuda()
             
-            matmul_quantizers = List_Quantizers(name).cuda()
+            '''matmul_quantizers = List_Quantizers(name).cuda()
 
             matmul_quantizers.append_quantizer("origin_module", m)
-            matmul_quantizers.append_quantizer("quant_module", new_m)
+            matmul_quantizers.append_quantizer("quant_module", new_m)'''
 
-            setattr(father_module, name[idx:], matmul_quantizers)
+            setattr(father_module, name[idx:], new_m)
 
     return model

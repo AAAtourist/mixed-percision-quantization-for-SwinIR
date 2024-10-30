@@ -12,6 +12,24 @@ from basicsr.models import build_model
 from basicsr.utils import (AvgTimer, MessageLogger, check_resume, get_env_info, get_root_logger, get_time_str,
                            init_tb_logger, init_wandb_logger, make_exp_dirs, mkdir_and_rename, scandir)
 from basicsr.utils.options import copy_opt_file, dict2str, parse_options
+from contextlib import contextmanager
+
+def save_training_state(model):
+    return {name: module.training for name, module in model.named_modules()}
+
+def restore_training_state(model, training_state):
+    for name, module in model.named_modules():
+        module.train(training_state[name])
+
+
+@contextmanager
+def model_eval_mode(model):
+    original_training_state = save_training_state(model)
+    try:
+        model.eval()
+        yield
+    finally:
+        restore_training_state(model, original_training_state)
 
 
 def init_tb_loggers(opt):
@@ -189,8 +207,9 @@ def train_pipeline(root_path):
             if opt.get('val') is not None and (current_iter % opt['val']['val_freq'] == 0):
                 if len(val_loaders) > 1:
                     logger.warning('Multiple validation datasets are *only* supported by SRModel.')
-                for val_loader in val_loaders:
-                    model.validation(val_loader, current_iter, tb_logger, opt['val']['save_img'])
+                with model_eval_mode(model):
+                    for val_loader in val_loaders:
+                        model.validation(val_loader, current_iter, tb_logger, opt['val']['save_img'])
 
             data_timer.start()
             iter_timer.start()
@@ -202,6 +221,7 @@ def train_pipeline(root_path):
     consumed_time = str(datetime.timedelta(seconds=int(time.time() - start_time)))
     logger.info(f'End of training. Time consumed: {consumed_time}')
     logger.info('Save the latest model.')
+    model.eval()
     model.save(epoch=-1, current_iter=-1)  # -1 stands for the latest
     if opt.get('val') is not None:
         for val_loader in val_loaders:

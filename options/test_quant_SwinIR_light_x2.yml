@@ -72,7 +72,7 @@ datasets:
 
 
 # network structures
-network_g:
+network_q:
   type: SwinIR
   upscale: 2
   img_size: 64
@@ -86,8 +86,8 @@ network_g:
 
 # path
 path:
-  pretrain_network_g: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
-  strict_load_g: True
+  pretrain_network_q: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
+  strict_load_q: True
 
 # validation settings
 val:

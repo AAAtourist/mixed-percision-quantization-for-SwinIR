@@ -5,12 +5,12 @@ from sklearn.cluster import KMeans
 import wandb
 import numpy as np
 # 加实验名 
-wandb.init(project='smooth SwinIR')
+#wandb.init(project='smooth SwinIR')
 
 
-config = wandb.config
-config.learning_rate = 0.01
-config.epochs = 300
+#config = wandb.config
+#config.learning_rate = 0.01
+#config.epochs = 300
 
 def lp_loss(pred, tgt, p=2.0):
     return (pred-tgt).abs().pow(p).mean()
@@ -89,7 +89,7 @@ def range_consistency_loss(group_outputs):
     ranges2 = [torch.min(output) for output in group_outputs]
     return torch.var(torch.stack(ranges1)) + torch.var(torch.stack(ranges2))
 
-def total_loss(grouped_matrices, group_labels, weight, A_matrices, B_matrices, weight_smooth=0.1, weight_range=0.1, weight_ortho=0.1):
+'''def total_loss(grouped_matrices, group_labels, weight, A_matrices, B_matrices, weight_smooth=0.1, weight_range=0.1, weight_ortho=0.1):
     group_outputs_XA = []
     group_outputs_BW = []
     smooth_losses_XA = []
@@ -153,7 +153,7 @@ def train(X, weight, group_labels, weight_smooth=0.5, weight_range=0.1, weight_o
     optimizer = torch.optim.Adam(A_matrices + B_matrices, lr=learning_rate)
 
     
-    for epoch in range(config.epochs):
+    for epoch in range(200):
         optimizer.zero_grad()
 
         loss, quant_loss, smooth_losses_XA, smooth_losses_BW, range_loss_XA, range_loss_BW, ortho_losses = total_loss(
@@ -162,11 +162,11 @@ def train(X, weight, group_labels, weight_smooth=0.5, weight_range=0.1, weight_o
 
         loss.backward()
         optimizer.step()
-        wandb.log({'smooth_losses_XA_': sum(smooth_losses_XA).item(), 'smooth_losses_BW': sum(smooth_losses_BW), 'quant_loss': sum(quant_loss)})
-        wandb.log({'epoch': epoch, 'Total Loss': loss.item(), 'Range Loss XA': range_loss_XA.item(), 'Range Loss BW' :range_loss_BW.item(), 'Ortho Loss': sum(ortho_losses).item()})
+        #wandb.log({'smooth_losses_XA_': sum(smooth_losses_XA).item(), 'smooth_losses_BW': sum(smooth_losses_BW), 'quant_loss': sum(quant_loss)})
+        #wandb.log({'epoch': epoch, 'Total Loss': loss.item(), 'Range Loss XA': range_loss_XA.item(), 'Range Loss BW' :range_loss_BW.item(), 'Ortho Loss': sum(ortho_losses).item()})
 
     return A_matrices, B_matrices
-
+'''
 def assign_groups(statistics, kmeans):
     return torch.tensor(kmeans.predict(statistics.cpu().numpy()))
 
@@ -185,20 +185,31 @@ class smooth_network(nn.Module):
 
     def forward(self, X):
 
-        XA_result, BW_result = self.process_activation(X)
+        XA_result, BW_result, loss = self.process_activation(X)
         
-        return XA_result, BW_result
+        return XA_result, BW_result, loss
 
     def inited(self, X):
         X = X.reshape(-1, 64, X.shape[-1]) #64 window_size
+        self.weight = self.weight.to(X.device)
         statistics = compute_channel_statistics(X) 
 
         self.kmeans = KMeans(n_clusters=self.clusters, random_state=0)
+
+        self.A_matrices = []# 2048 64 60
+        self.B_matrices = []
+        for _ in range(self.clusters):
+            A, B = initialize_matrices(X.shape[-1])
+            A = nn.Parameter(A.cuda(), requires_grad=True)
+            B = nn.Parameter(B.cuda(), requires_grad=True)
+            self.A_matrices.append(A)
+            self.B_matrices.append(B)
+
         group_labels = torch.tensor(self.kmeans.fit_predict(statistics.cpu().numpy()))
         #print(group_labels)
 
-        self.A_matrices, self.B_matrices = train(X, self.weight, group_labels, weight_smooth=10, 
-                                                weight_range=20, weight_ortho=10, learning_rate=0.02)
+        #self.A_matrices, self.B_matrices = train(X, self.weight, group_labels, weight_smooth=10, 
+        #                                        weight_range=20, weight_ortho=10, learning_rate=0.02)
 
     def process_activation(self, X): 
         X = X.reshape(-1, 64, X.shape[-1])
@@ -209,7 +220,7 @@ class smooth_network(nn.Module):
         
         XA_result = torch.zeros_like(X)  # [batch_size, 64, 60]
         BW_result = torch.zeros((batch_size, *self.weight.shape), device=X.device)  # [batch_size, 60, 60]
-
+        loss = None if not self.training else self.total_loss(X, group_labels)
 
         for group_id in range(len(self.A_matrices)):
             mask = (group_labels == group_id)
@@ -225,5 +236,47 @@ class smooth_network(nn.Module):
             XA_result[mask] = torch.bmm(X_group, A.unsqueeze(0).expand(X_group.size(0), -1, -1))
             BW_result[mask] = torch.bmm(B.unsqueeze(0).expand(X_group.size(0), -1, -1), self.weight.unsqueeze(0).expand(X_group.size(0), -1, -1))
         
-        return XA_result, BW_result
+        return XA_result, BW_result, loss
     
+    def total_loss(self, X, group_labels):
+        group_outputs_XA = []
+        group_outputs_BW = []
+        smooth_losses_XA = []
+        smooth_losses_BW = []
+        quant_losses = []
+        ortho_losses = []
+        
+        for i in range(len(self.A_matrices)):
+            group_indices = torch.where(group_labels == i)[0]
+            X_group = X[group_indices]
+            A = self.A_matrices[i]
+            B = self.B_matrices[i]
+            
+            XA = torch.matmul(X_group, A)
+            BW = torch.matmul(B, self.weight)
+
+            origin = torch.matmul(X_group, self.weight)
+
+            group_outputs_XA.append(XA)
+            group_outputs_BW.append(BW)
+
+
+            smooth_losses_XA.append(torch.var(XA))
+            smooth_losses_BW.append(torch.var(BW))
+
+            xa = quantize(XA)
+            bw = quantize(BW)
+            
+            quant_losses.append(lp_loss(xa @ bw, origin))
+            
+            ortho_losses.append(orthogonality_loss(A, B))
+        
+        range_loss_XA = range_consistency_loss(group_outputs_XA)
+        range_loss_BW = range_consistency_loss(group_outputs_BW)
+        
+        total_loss = (sum(smooth_losses_XA)*2 + sum(smooth_losses_BW)* 6) * 0.5 \
+                    + (range_loss_XA * 3 + range_loss_BW * 10) * 0.1 \
+                    + sum(quant_losses) * 100 \
+                    + sum(ortho_losses) * 0.1
+        
+        return total_loss
