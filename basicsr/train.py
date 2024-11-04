@@ -1,6 +1,7 @@
 import datetime
 import logging
 import math
+import os
 import time
 import torch
 from os import path as osp
@@ -109,6 +110,7 @@ def load_resume_state(opt):
 def train_pipeline(root_path):
     # parse options, set distributed setting, set random seed
     opt, args = parse_options(root_path, is_train=True)
+    os.environ['CUDA_VISIBLE_DEVICES'] = f"{opt['gpu']}"
     opt['root_path'] = root_path
 
     torch.backends.cudnn.benchmark = True

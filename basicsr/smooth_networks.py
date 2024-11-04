@@ -4,6 +4,7 @@ import torch.optim as optim
 from sklearn.cluster import KMeans
 import wandb
 import numpy as np
+
 # 加实验名 
 #wandb.init(project='smooth SwinIR')
 
@@ -12,22 +13,12 @@ import numpy as np
 #config.learning_rate = 0.01
 #config.epochs = 300
 
-def lp_loss(pred, tgt, p=2.0):
-    return (pred-tgt).abs().pow(p).mean()
+def lp_loss(pred, tgt):
+    res = float(torch.norm(pred - tgt))
+    return res
 
-def quantize(x):
-    x_clone = x.clone().detach()
-    max = x_clone.max()
-    min = x_clone.min()
-    n_bits = 2
-    delta = (max - min) / (2 ** n_bits - 1)
-    zero_point = (- min / delta).round()
-    x_int = torch.round(x / delta)
-    x_quant = torch.clamp(x_int + zero_point, 0, 2 ** n_bits - 1)
-    x_float_q = (x_quant - zero_point) * delta
-    return x_float_q
 
-def _quantize(x):
+'''def _quantize(x):
     n_bits = 2
     x_clone = x.clone().detach()
     x_max = x_clone.max()
@@ -63,7 +54,7 @@ def _quantize(x):
     x_quant = torch.clamp(x_int, 0, 2 ** n_bits - 1)
     x_dequant = (x_quant - best_zp) * best_delta
 
-    return x_dequant
+    return x_dequant'''
 
 
 def compute_channel_statistics(tensors):
@@ -168,10 +159,10 @@ def train(X, weight, group_labels, weight_smooth=0.5, weight_range=0.1, weight_o
     return A_matrices, B_matrices
 '''
 def assign_groups(statistics, kmeans):
-    return torch.tensor(kmeans.predict(statistics.cpu().numpy()))
+    return torch.tensor(kmeans.predict(statistics.cpu().detach().numpy()))
 
 class smooth_network(nn.Module):
-    def __init__(self, W, clusters):
+    def __init__(self, W, clusters, bit):
         super(smooth_network, self).__init__()
 
         self.input = None
@@ -179,17 +170,42 @@ class smooth_network(nn.Module):
         self.clusters = clusters
         self.kmeans = None 
         self.A_matrices = None 
+        self.bit = bit
         self.B_matrices = None # 2048 64 60 x 
 
 
 
-    def forward(self, X):
+    def forward(self, X, input_quantizer, weight_qunantizer):
 
-        XA_result, BW_result, loss = self.process_activation(X)
+        X = X.reshape(-1, 64, X.shape[-1])
+        statistics = compute_channel_statistics(X)  # [batch_size, 120]
+        group_labels = assign_groups(statistics, self.kmeans)  # [batch_size]
+
+        batch_size = X.size(0)
         
-        return XA_result, BW_result, loss
+        XA_result = torch.zeros_like(X)  # [batch_size, 64, 60]
+        BW_result = torch.zeros((batch_size, *self.weight.shape), device=X.device)  # [batch_size, 60, 60]
+        loss = None if not self.training else self.total_loss(X, group_labels, input_quantizer, weight_qunantizer)
+
+        for group_id in range(len(self.A_matrices)):
+            mask = (group_labels == group_id)
+            
+            if mask.sum() == 0:
+                continue
+            
+            X_group = X[mask]  # [num_in_group, 64, 60]
+            
+            A = self.A_matrices[group_id]  # [60, 60]
+            B = self.B_matrices[group_id]  # [60, 60]
+            
+            XA_result[mask] = torch.bmm(X_group, A.unsqueeze(0).expand(X_group.size(0), -1, -1))
+            BW_result[mask] = torch.bmm(B.unsqueeze(0).expand(X_group.size(0), -1, -1), self.weight.unsqueeze(0).expand(X_group.size(0), -1, -1))
+        
+        
+        return torch.bmm()
 
     def inited(self, X):
+
         X = X.reshape(-1, 64, X.shape[-1]) #64 window_size
         self.weight = self.weight.to(X.device)
         statistics = compute_channel_statistics(X) 
@@ -206,39 +222,14 @@ class smooth_network(nn.Module):
             self.B_matrices.append(B)
 
         group_labels = torch.tensor(self.kmeans.fit_predict(statistics.cpu().numpy()))
+
         #print(group_labels)
 
         #self.A_matrices, self.B_matrices = train(X, self.weight, group_labels, weight_smooth=10, 
         #                                        weight_range=20, weight_ortho=10, learning_rate=0.02)
 
-    def process_activation(self, X): 
-        X = X.reshape(-1, 64, X.shape[-1]).detach()
-        statistics = compute_channel_statistics(X)  # [batch_size, 120]
-        group_labels = assign_groups(statistics, self.kmeans)  # [batch_size]
-
-        batch_size = X.size(0)
-        
-        XA_result = torch.zeros_like(X)  # [batch_size, 64, 60]
-        BW_result = torch.zeros((batch_size, *self.weight.shape), device=X.device)  # [batch_size, 60, 60]
-        loss = None if not self.training else self.total_loss(X, group_labels)
-
-        for group_id in range(len(self.A_matrices)):
-            mask = (group_labels == group_id)
-            
-            if mask.sum() == 0:
-                continue
-            
-            X_group = X[mask]  # [num_in_group, 64, 60]
-            
-            A = self.A_matrices[group_id]  # [60, 60]
-            B = self.B_matrices[group_id]  # [60, 60]
-            
-            XA_result[mask] = torch.bmm(X_group, A.unsqueeze(0).expand(X_group.size(0), -1, -1))
-            BW_result[mask] = torch.bmm(B.unsqueeze(0).expand(X_group.size(0), -1, -1), self.weight.unsqueeze(0).expand(X_group.size(0), -1, -1))
-        
-        return XA_result, BW_result, loss
     
-    def total_loss(self, X, group_labels):
+    def total_loss(self, X, group_labels, input_quantizer, weight_qunantizer):
         group_outputs_XA = []
         group_outputs_BW = []
         smooth_losses_XA = []
@@ -248,26 +239,29 @@ class smooth_network(nn.Module):
         
         for i in range(len(self.A_matrices)):
             group_indices = torch.where(group_labels == i)[0]
+            if not group_indices.numel():
+                continue
+
             X_group = X[group_indices]
+
             A = self.A_matrices[i]
             B = self.B_matrices[i]
             
             XA = torch.matmul(X_group, A)
             BW = torch.matmul(B, self.weight)
-
+            
             origin = torch.matmul(X_group, self.weight)
 
             group_outputs_XA.append(XA)
             group_outputs_BW.append(BW)
 
-
             smooth_losses_XA.append(torch.var(XA))
             smooth_losses_BW.append(torch.var(BW))
 
-            xa = quantize(XA)
-            bw = quantize(BW)
+            xa = input_quantizer(XA)
+            bw = weight_qunantizer(BW)
             
-            quant_losses.append(lp_loss(xa @ bw, origin))
+            quant_losses.append(lp_loss(xa @ bw, origin)) #norm
             
             ortho_losses.append(orthogonality_loss(A, B))
         
@@ -276,7 +270,7 @@ class smooth_network(nn.Module):
         
         total_loss = (sum(smooth_losses_XA)*2 + sum(smooth_losses_BW)* 6) * 0.5 \
                     + (range_loss_XA * 3 + range_loss_BW * 10) * 0.1 \
-                    + sum(quant_losses) * 100 \
+                    + sum(quant_losses) * 10 \
                     + sum(ortho_losses) * 0.1
         
         return total_loss

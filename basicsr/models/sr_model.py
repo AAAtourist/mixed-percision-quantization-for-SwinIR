@@ -10,7 +10,7 @@ from torch import Tensor
 from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
-from basicsr.quantize import quant_model
+from basicsr.quantize import QuantLinear, quant_model
 from basicsr.utils import get_root_logger, imwrite, tensor2img
 from basicsr.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
@@ -75,17 +75,27 @@ class SRModel(BaseModel):
             param_key = self.opt['pathFP'].get('param_key_FP', 'params')
             self.load_network(self.net_Q, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
 
+        #torch.autograd.set_detect_anomaly(True)
         self.net_Q = quant_model(
             model = self.net_Q,
             quant_params=self.opt['quantization']
             )
+        
+        '''path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth"
+        self.net_Q = torch.load(path)
+        self.net_Q = self.model_to_device(self.net_Q)
+        self.net_Q.eval()'''
+
         self.net_Q = self.model_to_device(self.net_Q)
         self.cali_data = torch.load(opt['cali_data'])
+        self.net_Q.eval()
+
         with torch.no_grad():
             print('Performing initial quantization ...')
             self.feed_data(self.cali_data)
             _ = self.net_Q(self.lq)
             print('initial quantization over ...')
+            torch.save(self.net_Q, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth")
 
         if self.is_train:
             self.init_training_settings()
@@ -117,11 +127,17 @@ class SRModel(BaseModel):
         
 
     def setup_optimizers(self):
-        from basicsr.quantize import QuantLinear, qkv_module
+        from basicsr.quantize import QuantLinear, qkv_module, QuantMatMul
 
         train_opt = self.opt['train']
-        optim_matrix_params = []
+        optim_matrix_bound_params = []
         logger = get_root_logger()
+
+        for name, module in self.net_Q.named_modules():
+            if isinstance(module, (QuantLinear, QuantMatMul)):
+
+                optim_matrix_bound_params.extend(module.get_bound_param())
+                logger.info(f'{name} is added in optim_bound_params')
 
         for name, module in self.net_Q.named_modules():
             if isinstance(module, QuantLinear) and module.smooth_network is not None:
@@ -131,13 +147,13 @@ class SRModel(BaseModel):
                 net1 = module.smooth_network
                 #optim_matrix_params.append(*net1.A_matrices)
                 #optim_matrix_params.append(*net1.B_matrices)
-                optim_matrix_params.extend(net1.A_matrices)
-                optim_matrix_params.extend(net1.B_matrices)
+                optim_matrix_bound_params.extend(net1.A_matrices)
+                optim_matrix_bound_params.extend(net1.B_matrices)
 
                 logger.info(f'{name} is added in optim_matrix_params')
                 
         optim_type = train_opt['optim_matrix_params'].pop('type')
-        self.optimizer_matrix = self.get_optimizer(optim_type, optim_matrix_params, **train_opt['optim_matrix_params'])
+        self.optimizer_matrix = self.get_optimizer(optim_type, optim_matrix_bound_params, **train_opt['optim_matrix_params'])
         self.optimizers.append(self.optimizer_matrix)
 
     def feed_data(self, data):
@@ -177,13 +193,14 @@ class SRModel(BaseModel):
 
         self.smooth_loss = []
         def hook_smooth_network_loss(
-            module: Module, input: Tensor, output: Tuple[Tensor, ...], buffer: list
+            module: Module, input: Tensor, output: Tuple, buffer: list
         ):
-            buffer.append(output[-1])
+            if output[-1] is not None:
+                buffer.append(output[-1])
 
         for name, module in self.net_Q.named_modules():
             if isinstance(module, QuantLinear) and module.smooth_network is not None:
-                module.register_forward_hook(
+                module.smooth_network.register_forward_hook(
                     partial(hook_smooth_network_loss, buffer=self.smooth_loss)
                 )
                 
@@ -200,7 +217,7 @@ class SRModel(BaseModel):
         loss_dict = OrderedDict()
         # pixel loss
         if self.cri_pix:
-            l_pix = self.cri_pix(self.output, self.gt)
+            l_pix = self.cri_pix(self.output_Q, self.output_F) / self.output_Q.numel() * self.output_Q.size(0)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
@@ -227,14 +244,22 @@ class SRModel(BaseModel):
             loss_dict['l_feature'] = l_feature
             l_total += l_feature
 
+        l_smooth = 0
+        if self.smooth_loss:
+            idx = 0
+            for sl in self.smooth_loss:
+                l_smooth += sl
+                #loss_dict[f'l_smooth{idx}'] = sl
+                idx += 1
+
+            loss_dict['l_smooth'] = l_smooth
+            l_total += l_smooth
+
         self.optimizer_matrix.zero_grad()
         l_total.backward()
-        self.optimizer_g.step()
+        self.optimizer_matrix.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
-
-        if self.ema_decay > 0:
-            self.model_ema(decay=self.ema_decay)
 
     def test(self):
         # pad to multiplication of window_size
