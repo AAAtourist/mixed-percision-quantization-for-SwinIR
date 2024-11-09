@@ -16,10 +16,10 @@ from basicsr.utils.options import copy_opt_file, dict2str, parse_options
 from contextlib import contextmanager
 
 def save_training_state(model):
-    return {name: module.training for name, module in model.named_modules()}
+    return {name: module.training for name, module in model.net_Q.named_modules()}
 
 def restore_training_state(model, training_state):
-    for name, module in model.named_modules():
+    for name, module in model.net_Q.named_modules():
         module.train(training_state[name])
 
 
@@ -27,7 +27,7 @@ def restore_training_state(model, training_state):
 def model_eval_mode(model):
     original_training_state = save_training_state(model)
     try:
-        model.eval()
+        model.net_Q.eval()
         yield
     finally:
         restore_training_state(model, original_training_state)
@@ -223,7 +223,6 @@ def train_pipeline(root_path):
     consumed_time = str(datetime.timedelta(seconds=int(time.time() - start_time)))
     logger.info(f'End of training. Time consumed: {consumed_time}')
     logger.info('Save the latest model.')
-    model.eval()
     model.save(epoch=-1, current_iter=-1)  # -1 stands for the latest
     if opt.get('val') is not None:
         for val_loader in val_loaders:

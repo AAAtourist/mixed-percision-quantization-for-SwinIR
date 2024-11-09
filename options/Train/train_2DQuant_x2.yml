@@ -3,20 +3,18 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 3407
-gpu: 0
+gpu: 6
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 quant:
-  hook_per_layer: True
-  hook_per_block: False
+  hook_per_layer: False
+  hook_per_block: True
 
 quantization:
-  bits_candidate: [2]
+  bits_candidate: [4]
   input_quant_params:
     n_bits: 
-    channel_wise: True
   weight_quant_params:
     n_bits: 
-    channel_wise: True
 # dataset and data loader settings
 datasets:
   train:
@@ -104,6 +102,11 @@ train:
     reduction: mean
 
   feature_loss:
+    type: MSELoss
+    loss_weight: 5
+    reduction: mean
+
+  smooth_loss:
     type: MSELoss
     loss_weight: 5
     reduction: mean

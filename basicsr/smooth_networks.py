@@ -63,8 +63,12 @@ def compute_channel_statistics(tensors):
     return torch.cat([means, stds], dim=-1)  #[2048, 120]
 
 def initialize_matrices(size, noise_scale=0.01):
-    A = nn.Parameter(torch.eye(size) + noise_scale * torch.randn(size, size), requires_grad=True)
-    B = nn.Parameter(torch.eye(size) + noise_scale * torch.randn(size, size), requires_grad=True)
+    
+    #A = nn.Parameter(torch.eye(size) + noise_scale * torch.randn(size, size), requires_grad=True)
+    #B = nn.Parameter(torch.eye(size) + noise_scale * torch.randn(size, size), requires_grad=True)
+
+    A = nn.Parameter(torch.eye(size))
+    B = nn.Parameter(torch.eye(size))
     return A, B
 
 def orthogonality_loss(A, B):
@@ -78,6 +82,7 @@ def orthogonality_loss(A, B):
 def range_consistency_loss(group_outputs):
     ranges1 = [torch.max(output) for output in group_outputs]
     ranges2 = [torch.min(output) for output in group_outputs]
+    #print(f"stacked_ranges1 shape: {len(ranges1)}, stacked_ranges2 shape: {len(ranges2)}")
     return torch.var(torch.stack(ranges1)) + torch.var(torch.stack(ranges2))
 
 '''def total_loss(grouped_matrices, group_labels, weight, A_matrices, B_matrices, weight_smooth=0.1, weight_range=0.1, weight_ortho=0.1):
@@ -176,8 +181,10 @@ class smooth_network(nn.Module):
 
 
     def forward(self, X, input_quantizer, weight_qunantizer):
-
-        X = X.reshape(-1, 64, X.shape[-1])
+        #print(X.shape)
+        
+        
+        assert not torch.isnan(X).any(), 'nan X'
         statistics = compute_channel_statistics(X)  # [batch_size, 120]
         group_labels = assign_groups(statistics, self.kmeans)  # [batch_size]
 
@@ -201,8 +208,8 @@ class smooth_network(nn.Module):
             XA_result[mask] = torch.bmm(X_group, A.unsqueeze(0).expand(X_group.size(0), -1, -1))
             BW_result[mask] = torch.bmm(B.unsqueeze(0).expand(X_group.size(0), -1, -1), self.weight.unsqueeze(0).expand(X_group.size(0), -1, -1))
         
-        
-        return torch.bmm()
+        result = torch.bmm(input_quantizer(XA_result), weight_qunantizer(BW_result))
+        return result, loss
 
     def inited(self, X):
 
@@ -261,16 +268,30 @@ class smooth_network(nn.Module):
             xa = input_quantizer(XA)
             bw = weight_qunantizer(BW)
             
-            quant_losses.append(lp_loss(xa @ bw, origin)) #norm
+            #quant_losses.append(lp_loss(xa @ bw, origin)) #norm
             
             ortho_losses.append(orthogonality_loss(A, B))
         
         range_loss_XA = range_consistency_loss(group_outputs_XA)
         range_loss_BW = range_consistency_loss(group_outputs_BW)
+
+        #range_loss_XA = torch.tensor(range_loss_XA, dtype=torch.float32)
+        #range_loss_BW = torch.tensor(range_loss_BW, dtype=torch.float32)
+        smooth_losses_XA = torch.tensor(smooth_losses_XA, dtype=torch.float32)
+        smooth_losses_BW = torch.tensor(smooth_losses_BW, dtype=torch.float32)
+        #quant_losses = torch.tensor(quant_losses, dtype=torch.float32)
+        ortho_losses = torch.tensor(ortho_losses, dtype=torch.float32)
         
-        total_loss = (sum(smooth_losses_XA)*2 + sum(smooth_losses_BW)* 6) * 0.5 \
+        '''total_loss = (sum(smooth_losses_XA)*2 + sum(smooth_losses_BW)* 6) * 0.5 \
                     + (range_loss_XA * 3 + range_loss_BW * 10) * 0.1 \
-                    + sum(quant_losses) * 10 \
-                    + sum(ortho_losses) * 0.1
-        
+                    + sum(ortho_losses) * 0.1'''
+        #print('smooth_loss', torch.mean(smooth_losses_XA) + torch.mean(smooth_losses_BW))
+        #print('range_loss', (range_loss_XA  + range_loss_BW ))
+        #print('orth_loss', torch.mean(ortho_losses))
+
+
+        total_loss = (torch.mean(smooth_losses_XA) + torch.mean(smooth_losses_BW)) \
+                    + (range_loss_XA  + range_loss_BW ) \
+                    + torch.mean(ortho_losses)
+
         return total_loss

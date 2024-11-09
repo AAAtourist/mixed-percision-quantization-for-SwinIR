@@ -35,7 +35,14 @@ class Differentiable_Clip(Function):
         min_val: Tensor,
         max_val: Tensor,
     ) -> Any:
+        assert isinstance(max_val, Tensor), 'nononno'
         ctx.save_for_backward(input, min_val, max_val)
+        # if isinstance(min_val, Tensor):
+        #     min_val = min_val.item()
+        # if isinstance(max_val, Tensor):
+        #     max_val = max_val.item()
+        
+        # output = input.clamp(min_val, max_val)
         output = input.clamp(min_val.item(), max_val.item())
         return output
 
@@ -129,6 +136,14 @@ class QuantizerBase(nn.Module):
         self.calibrated = False
         self.one_direction_search = False
 
+    def set_params_lb_manually(self, lb: Tensor):
+        device = self.lower_bound.device
+        self.lower_bound.data = FloatTensor([lb]).data.clone().to(device)
+    
+    def set_params_ub_manually(self, ub: Tensor):
+        device = self.upper_bound.device
+        self.upper_bound.data = FloatTensor([ub]).data.clone().to(device)
+
 class UniformQuantizer(QuantizerBase):
     def __init__(self, n_bits: int = 8):
         super(UniformQuantizer, self).__init__(n_bits=n_bits)
@@ -136,9 +151,9 @@ class UniformQuantizer(QuantizerBase):
     def forward(self, x: torch.Tensor):
         
         # start quantization
-        if self.upper_bound.device != x.device:
-            self.upper_bound = self.upper_bound.to(x.device)
-            self.lower_bound = self.lower_bound.to(x.device)
+        #if self.upper_bound.device != x.device:
+        #    self.upper_bound = self.upper_bound.to(x.device)
+        #    self.lower_bound = self.lower_bound.to(x.device)
 
         delta = (self.upper_bound - self.lower_bound) / (self.n_levels - 1)
 
@@ -160,7 +175,9 @@ class UniformQuantizer(QuantizerBase):
             '''
     
     def init_quantization_scale(self, x, one_direction_search = False):
-        self.lower_bound, self.upper_bound = DOBI(x, bit=self.n_bits, one_direction=one_direction_search, is_uni=True)
+        lb, ub = DOBI(x, bit=self.n_bits, one_direction=one_direction_search, is_uni=True)
+        self.set_params_lb_manually(lb)
+        self.set_params_ub_manually(ub)
 
         '''
             delta, zero_point = None, None
@@ -232,9 +249,9 @@ class Log2Quantizer(QuantizerBase):
     def forward(self, x: torch.Tensor):
 
         # start quantization
-        if self.upper_bound.device != x.device:
-            self.upper_bound = self.upper_bound.to(x.device)
-            self.lower_bound = self.lower_bound.to(x.device)
+        #if self.upper_bound.device != x.device:
+        #    self.upper_bound = self.upper_bound.to(x.device)
+        #    self.lower_bound = self.lower_bound.to(x.device)
 
         delta = self.upper_bound - self.lower_bound
 
@@ -244,9 +261,9 @@ class Log2Quantizer(QuantizerBase):
 
         mask = x_int >= self.n_levels
 
-        x_quant = self.clip(x_int, 0, self.n_levels - 1)
+        x_int[mask] = self.n_levels - 1
     
-        x_float_q = 2**(-1 * x_quant) * delta + self.lower_bound
+        x_float_q = 2**(-1 * x_int) * delta + self.lower_bound
 
         x_float_q[mask] = self.lower_bound
 
@@ -276,7 +293,9 @@ class Log2Quantizer(QuantizerBase):
             '''
 
     def init_quantization_scale(self, x, one_direction_search = False):
-        self.lower_bound, self.upper_bound = DOBI(x, bit=self.n_bits, one_direction=one_direction_search, is_uni=False)
+        lb, ub = DOBI(x, bit=self.n_bits, one_direction=one_direction_search, is_uni=False)
+        self.set_params_lb_manually(lb)
+        self.set_params_ub_manually(ub)
         '''
             delta = None
             x_clone = x.clone().detach()
@@ -311,7 +330,7 @@ class QuantLinear(nn.Linear):
         
         self.dic_input_quantizer = dic_input_quantizer
         self.dic_weight_quantizer = dic_weight_quantizer
-        self.bit = 2
+        self.bit = 4
         self.quant_weight = None
         self.need_smooth = need_smooth
 
@@ -328,6 +347,7 @@ class QuantLinear(nn.Linear):
         if self.need_smooth:
             origin_shape = x.shape[:-1]
             x = x.reshape(-1, 64, x.shape[-1])
+            assert not torch.isnan(x).any(), 'nan x'
             #XA, BW, _ = self.smooth_network(x)
             #quant_XA = self.dic_input_quantizer[f"{self.bit}"](XA)
             #quant_BW = self.dic_weight_quantizer[f"{self.bit}"](BW)
@@ -384,7 +404,7 @@ class QuantMatMul(nn.Module):
 
         self.dic_input_quantizer = dic_input_quantizer
         self.dic_weight_quantizer = dic_weight_quantizer
-        self.bit = 2
+        self.bit = 4
 
         self.first_time = True
     
@@ -406,6 +426,8 @@ class QuantMatMul(nn.Module):
 
         self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(A, one_direction_search = True)
         self.dic_weight_quantizer[f"{self.bit}"].init_quantization_scale(B, one_direction_search = False)
+
+        print('finish matmul search')
         
 
     def get_bound_param(self):
@@ -418,7 +440,9 @@ class QuantMatMul(nn.Module):
         return params
 
 def create_quantizers(need_log_quantizer=False, default_quant_params={}):
-    dic_input_q, dic_weight_q = {}, {}
+    #dic_input_q, dic_weight_q = {}, {}
+    dic_input_q = nn.ModuleDict()
+    dic_weight_q = nn.ModuleDict()
 
     for i in default_quant_params['bits_candidate']:
         input_param = {**default_quant_params["input_quant_params"], "n_bits": i}
@@ -499,6 +523,8 @@ class qkv_module(nn.Module):
         self.new_v.weight.data = nn.Parameter(weight[2 * self.features : 3 * self.features, :])
 
     def forward(self, x):
+        
+        assert not torch.isnan(x).any(), 'nan qkv'
 
         outqk = self.new_qk(x)
         #outq = self.new_q(x)
@@ -520,7 +546,6 @@ def quant_model(model, quant_params={}):
             father_module = module_dict[father_name]
         else:
             raise RuntimeError(f"father module {father_name} not found")
-        print("Debug")
         if isinstance(m, nn.Linear):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx

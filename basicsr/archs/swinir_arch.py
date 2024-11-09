@@ -160,6 +160,7 @@ class WindowAttention(nn.Module):
 
         q = q * self.scale
         attn = self.MatMul1(q, k.transpose(-2, -1))
+        assert not torch.isnan(attn).any(), 'nan output matmul'
         #attn = (q @ k.transpose(-2, -1))
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
@@ -174,10 +175,13 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
+        assert not torch.isnan(attn).any(), 'nan output softmax'
         
         attn = self.attn_drop(attn)
+        assert not torch.isnan(attn).any(), 'nan output drop'
 
         x = self.MatMul2(attn, v).transpose(1, 2).reshape(b_, n, c)
+        assert not torch.isnan(x).any(), 'nan output MatMul2'
         #x = (attn @ v).transpose(1, 2).reshape(b_, n, c)
         x = self.proj(x)
         x = self.proj_drop(x)
