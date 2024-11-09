@@ -161,24 +161,25 @@ class Log2Quantizer(nn.Module):
         self.channel_wise = channel_wise
 
     def forward(self, x: torch.Tensor):
-        sign_x = torch.sign(x)
-        abs_x = torch.abs(x)
+        min_x = torch.min(x.clone().detach())
+        x -= min_x
+        #sign_x = torch.sign(x)
+        #x = torch.abs(x)
         
         if self.inited is False:
-            self.delta = self.init_quantization_scale(abs_x)
+            self.delta = self.init_quantization_scale(x)
             self.inited = True
 
         # start quantization
-        x_dequant = self.quantize(abs_x, self.delta)
-        x_dequant *= sign_x
-        return x_dequant
+        x_dequant = self.quantize(x, self.delta)
+        return x_dequant + min_x
 
     def init_quantization_scale(self, x: torch.Tensor):
         delta = None
         x_clone = x.clone().detach()
         delta = x_clone.max()
         best_score = 1e+10
-        for pct in [0.999, 0.9999, 0.99999]:
+        for pct in [0.99, 0.999, 0.9999, 0.99999]:
             try:
                 new_delta = torch.quantile(x_clone.reshape(-1), pct)
             except:
@@ -194,12 +195,24 @@ class Log2Quantizer(nn.Module):
 
         return delta
 
-    def quantize(self, x, delta):      
+    def quantize(self, x, delta):
         from math import sqrt
+        x = torch.clamp(x, 1e-6, delta)
         x_int = torch.round(-1 * (x/delta).log2())
         mask = x_int >= self.n_levels
         x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
-        x_float_q = 2**(-1 * torch.ceil(x_quant)) * delta
+        x_float_q = 2**(-1 * (x_quant)) * delta
+        x_float_q[mask] = 0
+        
+        return x_float_q
+    
+        from math import sqrt
+        x = torch.clamp(x, 1e-6, delta)
+        x_int = torch.round(-1 * (x/delta).log2() * 2)
+        mask = x_int >= self.n_levels
+        x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
+        odd_mask = (x_quant%2) * (sqrt(2)-1) + 1
+        x_float_q = 2**(-1 * torch.ceil(x_quant/2)) * odd_mask * delta
         x_float_q[mask] = 0
         
         return x_float_q
@@ -212,8 +225,13 @@ class QuantLinear(nn.Linear):
                  weight_quant_params={}):
         super(QuantLinear, self).__init__(in_features, out_features)
 
+        if 'log_quant' in input_quant_params:
+            input_quant_params.pop('log_quant')
+            self.input_quantizer = Log2Quantizer(**input_quant_params)
+        else:
+            self.input_quantizer = UniformQuantizer(**input_quant_params)
         
-        self.input_quantizer = UniformQuantizer(**input_quant_params)
+        #self.input_quantizer = UniformQuantizer(**input_quant_params)
         self.weight_quantizer = UniformQuantizer(**weight_quant_params)
 
         self.first_time = True
@@ -226,7 +244,7 @@ class QuantLinear(nn.Linear):
             self.first_time = False
             #draw_3d_plot(self.weight)
 
-        #x = self.input_quantizer(x)
+        x = self.input_quantizer(x)
         w = self.weight_quantizer(self.weight)
         
         out = F.linear(x, weight=w, bias=self.bias)
@@ -243,7 +261,7 @@ class QuantMatMul(nn.Module):
         if 'log_quant' in input_quant_params_matmul:
             input_quant_params_matmul.pop('log_quant')
             self.quantizer_A = Log2Quantizer(**input_quant_params_matmul)
-            self.quantizer_B = Log2Quantizer(**input_quant_params_matmul)
+            self.quantizer_B = UniformQuantizer(**input_quant_params_matmul)
         else :
             self.quantizer_A = UniformQuantizer(**input_quant_params_matmul)
             self.quantizer_B = UniformQuantizer(**input_quant_params_matmul)
@@ -282,12 +300,17 @@ def quant_model(model, input_quant_params={}, weight_quant_params={}):
         if isinstance(m, nn.Linear):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
-            new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
+            #new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
+            if 'fc2' in name:
+                input_params_log = deepcopy(input_quant_params)
+                input_params_log['log_quant'] = True
+                new_m = QuantLinear(m.in_features, m.out_features, input_params_log, weight_quant_params)
+            else:
+                new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
             new_m.weight.data = m.weight.data
             new_m.bias = m.bias
             setattr(father_module, name[idx:], new_m)
         elif isinstance(m, MatMul):
-            continue
             # Matmul Layer
             idx = idx + 1 if idx != 0 else idx
             if 'MatMul2' in name:
