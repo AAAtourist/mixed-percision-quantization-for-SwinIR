@@ -174,9 +174,9 @@ class smooth_network(nn.Module):
         self.weight = W
         self.clusters = clusters
         self.kmeans = None 
-        self.A_matrices = None 
+        self.A_matrices = nn.ParameterList()
         self.bit = bit
-        self.B_matrices = None # 2048 64 60 x 
+        self.B_matrices = nn.ParameterList() # 2048 64 60 x 
 
 
 
@@ -219,8 +219,6 @@ class smooth_network(nn.Module):
 
         self.kmeans = KMeans(n_clusters=self.clusters, random_state=0)
 
-        self.A_matrices = []# 2048 64 60
-        self.B_matrices = []
         for _ in range(self.clusters):
             A, B = initialize_matrices(X.shape[-1])
             A = nn.Parameter(A.cuda(), requires_grad=True)
@@ -259,8 +257,8 @@ class smooth_network(nn.Module):
             
             origin = torch.matmul(X_group, self.weight)
 
-            group_outputs_XA.append(XA)
-            group_outputs_BW.append(BW)
+            #group_outputs_XA.append(XA)
+            #group_outputs_BW.append(BW)
 
             smooth_losses_XA.append(torch.var(XA))
             smooth_losses_BW.append(torch.var(BW))
@@ -268,18 +266,18 @@ class smooth_network(nn.Module):
             xa = input_quantizer(XA)
             bw = weight_qunantizer(BW)
             
-            #quant_losses.append(lp_loss(xa @ bw, origin)) #norm
+            quant_losses.append(lp_loss(xa @ bw, origin)) #norm
             
             ortho_losses.append(orthogonality_loss(A, B))
         
-        range_loss_XA = range_consistency_loss(group_outputs_XA)
-        range_loss_BW = range_consistency_loss(group_outputs_BW)
+        #range_loss_XA = range_consistency_loss(group_outputs_XA)
+        #range_loss_BW = range_consistency_loss(group_outputs_BW)
 
         #range_loss_XA = torch.tensor(range_loss_XA, dtype=torch.float32)
         #range_loss_BW = torch.tensor(range_loss_BW, dtype=torch.float32)
         smooth_losses_XA = torch.tensor(smooth_losses_XA, dtype=torch.float32)
         smooth_losses_BW = torch.tensor(smooth_losses_BW, dtype=torch.float32)
-        #quant_losses = torch.tensor(quant_losses, dtype=torch.float32)
+        quant_losses = torch.tensor(quant_losses, dtype=torch.float32)
         ortho_losses = torch.tensor(ortho_losses, dtype=torch.float32)
         
         '''total_loss = (sum(smooth_losses_XA)*2 + sum(smooth_losses_BW)* 6) * 0.5 \
@@ -291,7 +289,7 @@ class smooth_network(nn.Module):
 
 
         total_loss = (torch.mean(smooth_losses_XA) + torch.mean(smooth_losses_BW)) \
-                    + (range_loss_XA  + range_loss_BW ) \
-                    + torch.mean(ortho_losses)
+                    + torch.mean(ortho_losses) + quant_losses
+                    #+ (range_loss_XA  + range_loss_BW ) \
 
         return total_loss

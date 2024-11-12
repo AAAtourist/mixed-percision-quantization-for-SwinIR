@@ -4,19 +4,20 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 0
-gpu: 2
+gpu: 1
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
+quant:
+  hook_per_layer: False
+  hook_per_block: True
 
 quantization:
-  bits_candidate: [2]
+  bits_candidate: [4]
   input_quant_params:
     n_bits: 
-    channel_wise: True
   weight_quant_params:
     n_bits: 
-    channel_wise: True
 
 
 datasets:
@@ -71,8 +72,7 @@ datasets:
       type: disk
 
 
-# network structures
-network_q:
+network_Q:
   type: SwinIR
   upscale: 2
   img_size: 64
@@ -84,14 +84,19 @@ network_q:
   mlp_ratio: 2
   upsampler: pixelshuffledirect
 
-# path
+
+# paths
 path:
-  pretrain_network_q: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
-  strict_load_q: True
+  pretrain_network_Q: /data/user/tourist/mixed-percision-quantization-for-SwinIR/experiments/add_smooth_loss/models/net_Q_5500.pth
+  strict_load_Q: true
+
+pathFP:
+  pretrain_network_FP: /data/pretrained/SwinIR/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2.pth
+  strict_load_FP: true
 
 # validation settings
 val:
-  save_img: True
+  save_img: False
   suffix: ~  # add suffix to saved images, if None, use exp name
   use_chop: False  # True to save memory, if img too large
 

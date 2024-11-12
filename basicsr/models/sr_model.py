@@ -10,7 +10,7 @@ from torch import Tensor
 from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
-from basicsr.quantize import QuantLinear, quant_model
+from basicsr.quantize import QuantLinear, quant_model, QuantMatMul
 from basicsr.utils import get_root_logger, imwrite, tensor2img
 from basicsr.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
@@ -81,22 +81,31 @@ class SRModel(BaseModel):
             quant_params=self.opt['quantization']
             )
         
-        path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth"
-        self.net_Q = torch.load(path)
         self.net_Q = self.model_to_device(self.net_Q)
-        self.net_Q.eval()
-        
-        '''self.net_Q = self.model_to_device(self.net_Q)
         self.cali_data = torch.load(opt['cali_data'])
         self.net_Q.eval()
 
         with torch.no_grad():
-            print('Performing initial quantization ...')
             self.feed_data(self.cali_data)
             _ = self.net_Q(self.lq)
-            print('initial quantization over ...')
-            torch.save(self.net_Q, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth")'''
+            #torch.save(self.net_Q, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth")
 
+        '''state_dict = self.net_Q.state_dict()
+        for key, _ in state_dict.items():
+            print(key)'''
+        if self.opt['path']['pretrain_network_Q'] != None:
+            self.load_network(
+                self.net_Q,
+                self.opt["path"]["pretrain_network_Q"],
+                self.opt["path"]["strict_load_Q"],
+                "params",
+            )
+            print('load')
+            for name, module in self.net_Q.named_modules():
+                if isinstance(module, (QuantLinear, QuantMatMul)):
+                    module.first_time = False
+
+                    
         if self.is_train:
             self.init_training_settings()
 
@@ -143,7 +152,7 @@ class SRModel(BaseModel):
                 logger.info(f'{name} is added in optim_bound_params')
 
         for name, module in self.net_Q.named_modules():
-            if isinstance(module, QuantLinear) and module.smooth_network is not None:
+            if isinstance(module, QuantLinear) and module.need_smooth:
                 print(f'find a module with smooth network:{name}')
                 module.smooth_network.train()
 
@@ -212,14 +221,6 @@ class SRModel(BaseModel):
         self.feature_F.clear()
         self.smooth_loss.clear()
 
-        global num_iter
-        if 'num_iter' not in globals(): 
-            num_iter = 0 
-
-        global num_idx
-        if 'num_idx' not in globals(): 
-            num_idx = 0 
-
         self.output_Q = self.net_Q(self.lq)
         with torch.no_grad():
             self.output_F = self.net_F(self.lq)
@@ -259,18 +260,11 @@ class SRModel(BaseModel):
             l_total += l_feature
 
 
-        if num_iter == 0 or num_iter == 199 or num_iter == 1:
-            loss_dict['10min_l_pix'] = l_pix
-            loss_dict['10min_l_feature'] = l_feature
-            #print('l_feature', l_feature)
-        num_iter += 1
-        num_iter = num_iter % 200
-
-        '''l_smooth = 0
+        l_smooth = 0
+        smooth_weight = 1e-12
         if self.Smooth_loss:
             print('smoothloss!!!')
             idx = 0
-            print(len(self.smooth_loss))
             num = len(self.smooth_loss)
             for sl in self.smooth_loss:
                 l_smooth += sl / num
@@ -278,7 +272,7 @@ class SRModel(BaseModel):
                 idx += 1
             print(l_smooth)
             loss_dict['l_smooth'] = l_smooth
-            l_total += l_smooth'''
+            l_total += l_smooth * smooth_weight
         #print('l_total', l_total)
 
         self.optimizer_matrix.zero_grad()

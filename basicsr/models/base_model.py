@@ -183,8 +183,8 @@ class BaseModel():
 
         Args:
             current_iter (int): Current iteration.
-            warmup_iter (int)： Warm-up iter numbers. -1 for no warm-up.
-                Default： -1.
+            warmup_iter (int): Warm-up iter numbers. -1 for no warm-up.
+                Default: -1.
         """
         if current_iter > 1:
             for scheduler in self.schedulers:
@@ -239,6 +239,7 @@ class BaseModel():
         while retry > 0:
             try:
                 torch.save(save_dict, save_path)
+                #torch.save(self.net_Q, save_path)
             except Exception as e:
                 logger = get_root_logger()
                 logger.warning(f'Save model error: {e}, remaining retry times: {retry - 1}')

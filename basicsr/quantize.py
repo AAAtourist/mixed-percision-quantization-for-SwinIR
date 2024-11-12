@@ -334,7 +334,7 @@ class QuantLinear(nn.Linear):
         self.quant_weight = None
         self.need_smooth = need_smooth
 
-        self.smooth_network = None
+        self.smooth_network = nn.Module()
 
         self.first_time = True
 
@@ -374,7 +374,7 @@ class QuantLinear(nn.Linear):
 
             self.smooth_network = smooth_network(self.weight.T, 20, self.bit)
             self.smooth_network.inited(x)
-            self.add_module("smooth_network", self.smooth_network)
+            #self.add_module("smooth_network", self.smooth_network)
             self.smooth_network.eval()
 
             #XA, BW, _ = self.smooth_network(x)
