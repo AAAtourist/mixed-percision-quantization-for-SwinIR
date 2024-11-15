@@ -767,6 +767,8 @@ class SwinIR(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
 
+        self.smooth_network = nn.Module()
+
         # ------------------------- 1, shallow feature extraction ------------------------- #
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
 

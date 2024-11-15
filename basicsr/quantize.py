@@ -334,8 +334,6 @@ class QuantLinear(nn.Linear):
         self.quant_weight = None
         self.need_smooth = need_smooth
 
-        self.smooth_network = nn.Module()
-
         self.first_time = True
 
     def forward(self, x):
@@ -348,13 +346,12 @@ class QuantLinear(nn.Linear):
             origin_shape = x.shape[:-1]
             x = x.reshape(-1, 64, x.shape[-1])
             assert not torch.isnan(x).any(), 'nan x'
-            #XA, BW, _ = self.smooth_network(x)
-            #quant_XA = self.dic_input_quantizer[f"{self.bit}"](XA)
-            #quant_BW = self.dic_weight_quantizer[f"{self.bit}"](BW)
-            #quant_XA = XA
-            out, _ = self.smooth_network(x, self.dic_input_quantizer[f"{self.bit}"], self.dic_weight_quantizer[f"{self.bit}"])
             
-            #out = torch.bmm(quant_XA, quant_BW)
+            XA, BW = self.smooth_network(x)
+            quant_XA = self.dic_input_quantizer[f"{self.bit}"](XA)
+            quant_BW = self.dic_weight_quantizer[f"{self.bit}"](BW)
+            
+            out = torch.bmm(quant_XA, quant_BW)
             out = out.reshape(((*origin_shape, -1)))
             out += self.bias if self.bias is not None else 0
         else:

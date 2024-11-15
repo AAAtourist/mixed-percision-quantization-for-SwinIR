@@ -44,6 +44,7 @@ from types import MethodType
 from tqdm import tqdm
 import torch.multiprocessing as mp
 from torch.nn import Parameter
+from basicsr.smooth_networks import smooth_network
 
 import warnings
 
@@ -76,6 +77,7 @@ class SRModel(BaseModel):
             self.load_network(self.net_Q, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
 
         #torch.autograd.set_detect_anomaly(True)
+        self.net_Q.smooth_network = smooth_network(opt['clusters'], opt['network_Q']['embed_dim'])
         self.net_Q = quant_model(
             model = self.net_Q,
             quant_params=self.opt['quantization']
@@ -85,14 +87,20 @@ class SRModel(BaseModel):
         self.cali_data = torch.load(opt['cali_data'])
         self.net_Q.eval()
 
+        '''path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth"
+        self.net_Q = torch.load(path)
+        self.net_Q = self.model_to_device(self.net_Q)
+        '''
         with torch.no_grad():
             self.feed_data(self.cali_data)
             _ = self.net_Q(self.lq)
             #torch.save(self.net_Q, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth")
 
-        '''state_dict = self.net_Q.state_dict()
-        for key, _ in state_dict.items():
-            print(key)'''
+        '''
+            state_dict = self.net_Q.state_dict()
+            for key, _ in state_dict.items():
+                print(key)
+        '''
         if self.opt['path']['pretrain_network_Q'] != None:
             self.load_network(
                 self.net_Q,
@@ -137,7 +145,6 @@ class SRModel(BaseModel):
         self.build_hooks_on_Q_and_F()
         self.build_hooks_on_smooth_networks()
         
-
     def setup_optimizers(self):
         from basicsr.quantize import QuantLinear, qkv_module, QuantMatMul
 
@@ -261,7 +268,7 @@ class SRModel(BaseModel):
 
 
         l_smooth = 0
-        smooth_weight = 1e-12
+        smooth_weight = 1e-7
         if self.Smooth_loss:
             print('smoothloss!!!')
             idx = 0
