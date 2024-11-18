@@ -78,6 +78,7 @@ class SRModel(BaseModel):
 
         #torch.autograd.set_detect_anomaly(True)
         self.net_Q.smooth_network = smooth_network(opt['clusters'], opt['network_Q']['embed_dim'])
+        #_ = get_global_smooth_network(opt['clusters'], opt['network_Q']['embed_dim'])
         self.net_Q = quant_model(
             model = self.net_Q,
             quant_params=self.opt['quantization']
@@ -86,8 +87,8 @@ class SRModel(BaseModel):
         self.net_Q = self.model_to_device(self.net_Q)
         self.cali_data = torch.load(opt['cali_data'])
         self.net_Q.eval()
-
-        '''path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth"
+        '''
+        path = "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth"
         self.net_Q = torch.load(path)
         self.net_Q = self.model_to_device(self.net_Q)
         '''
@@ -95,7 +96,6 @@ class SRModel(BaseModel):
             self.feed_data(self.cali_data)
             _ = self.net_Q(self.lq)
             #torch.save(self.net_Q, "/data/user/tourist/mixed-percision-quantization-for-SwinIR/pretrained_model/SwinIR_x2_cali_done.pth")
-
         '''
             state_dict = self.net_Q.state_dict()
             for key, _ in state_dict.items():
@@ -134,7 +134,8 @@ class SRModel(BaseModel):
             self.feature_loss = None
 
         if train_opt.get('smooth_loss'):
-            self.Smooth_loss = True
+            #self.Smooth_loss = True
+            self.Smooth_loss = build_loss(train_opt['smooth_loss']).to(self.device)
 
         if self.cri_pix is None and self.feature_loss is None:
             raise ValueError('Both pixel and feature_loss are None.')
@@ -149,31 +150,28 @@ class SRModel(BaseModel):
         from basicsr.quantize import QuantLinear, qkv_module, QuantMatMul
 
         train_opt = self.opt['train']
-        optim_matrix_bound_params = []
+        optim_bound_params = []
+        optim_matrix_params = []
         logger = get_root_logger()
 
         for name, module in self.net_Q.named_modules():
             if isinstance(module, (QuantLinear, QuantMatMul)):
 
-                optim_matrix_bound_params.extend(module.get_bound_param())
+                optim_bound_params.extend(module.get_bound_param())
                 logger.info(f'{name} is added in optim_bound_params')
 
-        for name, module in self.net_Q.named_modules():
-            if isinstance(module, QuantLinear) and module.need_smooth:
-                print(f'find a module with smooth network:{name}')
-                module.smooth_network.train()
+        net = smooth_network()
+        
+        optim_matrix_params.extend(net.A_matrices)
+        optim_matrix_params.extend(net.B_matrices)
 
-                net1 = module.smooth_network
-                #optim_matrix_params.append(*net1.A_matrices)
-                #optim_matrix_params.append(*net1.B_matrices)
-                optim_matrix_bound_params.extend(net1.A_matrices)
-                optim_matrix_bound_params.extend(net1.B_matrices)
-
-                logger.info(f'{name} is added in optim_matrix_params')
+        logger.info('global_smooth_network is added in optim_matrix_params')
                 
         optim_type = train_opt['optim_matrix_params'].pop('type')
-        self.optimizer_matrix = self.get_optimizer(optim_type, optim_matrix_bound_params, **train_opt['optim_matrix_params'])
+        self.optimizer_bound = self.get_optimizer(optim_type, optim_bound_params, **train_opt['optim_matrix_params'])
+        self.optimizer_matrix = self.get_optimizer(optim_type, optim_matrix_params, **train_opt['optim_matrix_params'])
         self.optimizers.append(self.optimizer_matrix)
+        self.optimizers.append(self.optimizer_bound)
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device)
@@ -208,25 +206,29 @@ class SRModel(BaseModel):
                 )
 
     def build_hooks_on_smooth_networks(self):
-        from basicsr.quantize import QuantLinear, qkv_module
 
-        self.smooth_loss = []
+        self.smooth_feature = []
         def hook_smooth_network_loss(
             module: Module, input: Tensor, output: Tuple, buffer: list
         ):
-            if output[-1] is not None:
-                buffer.append(output[-1])
+            buffer.append(output[0])
+            buffer.append(output[1])
 
-        for name, module in self.net_Q.named_modules():
+        net = smooth_network()
+        net.register_forward_hook(
+                    partial(hook_smooth_network_loss, buffer=self.smooth_feature)
+                )
+
+        '''for name, module in self.net_Q.named_modules():
             if isinstance(module, QuantLinear) and module.smooth_network is not None:
                 module.smooth_network.register_forward_hook(
                     partial(hook_smooth_network_loss, buffer=self.smooth_loss)
-                )
+                )'''
                 
     def optimize_parameters(self, current_iter):
         self.feature_Q.clear()
         self.feature_F.clear()
-        self.smooth_loss.clear()
+        self.smooth_feature.clear()
 
         self.output_Q = self.net_Q(self.lq)
         with torch.no_grad():
@@ -235,56 +237,80 @@ class SRModel(BaseModel):
         l_total = 0
         loss_dict = OrderedDict()
         # pixel loss
-        if self.cri_pix:
-            l_pix = self.cri_pix(self.output_Q, self.output_F) / self.output_Q.numel() * self.output_Q.size(0)
-            l_total += l_pix
-            loss_dict['l_pix'] = l_pix
-            
-            #print('l_pix', l_pix)
+        current_iter = (1 + current_iter) // 100
+        if current_iter % 2 == 1:
+            if self.cri_pix:
+                l_pix = self.cri_pix(self.output_Q, self.output_F) / self.output_Q.numel() * self.output_Q.size(0)
+                l_total += l_pix
+                loss_dict['l_pix'] = l_pix
+                
+                #print('l_pix', l_pix)
 
 
-        # feature loss
-        if self.feature_loss:
-            l_feature = 0
-            idx = 0
-            for feature_q, feature_f in zip(self.feature_Q, self.feature_F):
-                norm_q = torch.norm(feature_q, dim=(1, 2)).detach()
-                norm_f = torch.norm(feature_f, dim=(1, 2)).detach()
+            # feature loss
+            if self.feature_loss:
+                l_feature = 0
+                idx = 0
+                for feature_q, feature_f in zip(self.feature_Q, self.feature_F):
+                    norm_q = torch.norm(feature_q, dim=(1, 2)).detach()
+                    norm_f = torch.norm(feature_f, dim=(1, 2)).detach()
 
-                norm_q.unsqueeze_(1).unsqueeze_(2)
-                norm_f.unsqueeze_(1).unsqueeze_(2)
+                    norm_q.unsqueeze_(1).unsqueeze_(2)
+                    norm_f.unsqueeze_(1).unsqueeze_(2)
 
-                feature_q = feature_q / norm_q
-                feature_f = feature_f / norm_f
+                    feature_q = feature_q / norm_q
+                    feature_f = feature_f / norm_f
 
-                fi = self.feature_loss(feature_q, feature_f) / feature_q.numel()
+                    fi = self.feature_loss(feature_q, feature_f) / feature_q.numel()
 
-                loss_dict[f'l_feature_{idx}'] = fi
-                l_feature += fi
-                idx += 1
-            
-            #loss_dict['l_feature'] = l_feature
-            l_total += l_feature
+                    loss_dict[f'l_feature_{idx}'] = fi
+                    l_feature += fi
+                    idx += 1
+                
+                #loss_dict['l_feature'] = l_feature
+                l_total += l_feature
 
+            self.optimizer_bound.zero_grad()
+            l_total.backward()
+            self.optimizer_bound.step()
 
-        l_smooth = 0
-        smooth_weight = 1e-7
-        if self.Smooth_loss:
-            print('smoothloss!!!')
-            idx = 0
-            num = len(self.smooth_loss)
-            for sl in self.smooth_loss:
-                l_smooth += sl / num
-                #loss_dict[f'l_smooth{idx}'] = sl
-                idx += 1
-            print(l_smooth)
-            loss_dict['l_smooth'] = l_smooth
-            l_total += l_smooth * smooth_weight
-        #print('l_total', l_total)
+        if current_iter % 2 == 0:
+            if self.Smooth_loss:
+                l_smooth = 0
+                idx = 0
+                for feature_A, feature_B in zip(self.smooth_feature[::2], self.smooth_feature[1::2]):
+                    fi = self.Smooth_loss(feature_A) + self.Smooth_loss(feature_B)
+                    fi = fi / len(self.smooth_feature)
+                    #loss_dict[f'smooth_feature_{idx}'] = fi
+                    l_smooth += fi
+                    idx += 1
 
-        self.optimizer_matrix.zero_grad()
-        l_total.backward()
-        self.optimizer_matrix.step()
+                loss_dict['smooth_feature'] = l_smooth
+
+            l_total += l_smooth
+
+            loss_dict['orth_loss'] = self.net_Q.smooth_network.orth_loss()
+
+            self.optimizer_matrix.zero_grad()
+            l_total.backward()
+            self.optimizer_matrix.step()
+
+        '''
+            l_smooth = 0
+            smooth_weight = 1e-7
+            if self.Smooth_loss:
+                print('smoothloss!!!')
+                idx = 0
+                num = len(self.smooth_loss)
+                for sl in self.smooth_loss:
+                    l_smooth += sl / num
+                    #loss_dict[f'l_smooth{idx}'] = sl
+                    idx += 1
+                print(l_smooth)
+                loss_dict['l_smooth'] = l_smooth
+                l_total += l_smooth * smooth_weight
+            #print('l_total', l_total)'''
+        
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 

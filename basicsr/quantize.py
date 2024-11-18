@@ -339,15 +339,17 @@ class QuantLinear(nn.Linear):
     def forward(self, x):
         if self.first_time:
             self.search_best_setting(x)
-            self.quant_weight = self.dic_weight_quantizer[f"{self.bit}"](self.weight)
+            #self.quant_weight = self.dic_weight_quantizer[f"{self.bit}"](self.weight)
             self.first_time = False
+            return F.linear(x, weight = self.weight, bias = self.bias)
 
         if self.need_smooth:
             origin_shape = x.shape[:-1]
             x = x.reshape(-1, 64, x.shape[-1])
             assert not torch.isnan(x).any(), 'nan x'
             
-            XA, BW = self.smooth_network(x)
+            net = smooth_network()
+            XA, BW = net(x, self.weight.T)
             quant_XA = self.dic_input_quantizer[f"{self.bit}"](XA)
             quant_BW = self.dic_weight_quantizer[f"{self.bit}"](BW)
             
@@ -356,6 +358,7 @@ class QuantLinear(nn.Linear):
             out += self.bias if self.bias is not None else 0
         else:
             quant_x = self.dic_input_quantizer[f"{self.bit}"](x)
+            self.quant_weight = self.dic_weight_quantizer[f"{self.bit}"](self.weight)
             out = F.linear(quant_x, weight = self.quant_weight, bias = self.bias)
 
         return out
@@ -368,16 +371,10 @@ class QuantLinear(nn.Linear):
                 num_sm = 0
             print(f'start cali smooth network {num_sm}')
             
+            net = smooth_network()
+            net.inited(x)
+            net.eval()
 
-            self.smooth_network = smooth_network(self.weight.T, 20, self.bit)
-            self.smooth_network.inited(x)
-            #self.add_module("smooth_network", self.smooth_network)
-            self.smooth_network.eval()
-
-            #XA, BW, _ = self.smooth_network(x)
-            #self.dic_input_quantizer[f"{self.bit}"].init_quantization_scale(XA) #per-tensor
-            #self.dic_weight_quantizer[f"{self.bit}"].init_quantization_scale(BW)
-            
             print(f'finish cali smooth network {num_sm}')
             num_sm += 1
 

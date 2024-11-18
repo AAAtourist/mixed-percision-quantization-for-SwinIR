@@ -3,13 +3,13 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 3407
-gpu: 2
+gpu: 7
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 quant:
   hook_per_layer: False
   hook_per_block: True
 
-clusters: 30
+clusters: 50
 
 quantization:
   bits_candidate: [4]
@@ -105,9 +105,9 @@ train:
     reduction: mean
 
   smooth_loss:
-    type: MSELoss
-    loss_weight: 5
-    reduction: mean
+    type: VarLoss
+    loss_weight: 1e-7
+    reduction: 
 
 
 
@@ -133,7 +133,7 @@ logger:
   save_checkpoint_freq: !!float 100
   use_tb_logger: True
   wandb:
-    project: mix_quant_add_smooth_e-10
+    project: mix_quant_bound_matrix_turns
     resume_id: ~
 
 # dist training settings

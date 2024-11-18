@@ -81,6 +81,17 @@ class MSELoss(nn.Module):
 
 
 @LOSS_REGISTRY.register()
+class VarLoss(nn.Module):
+
+    def __init__(self, loss_weight=1.0, reduction=None):
+        super(VarLoss, self).__init__()
+
+        self.loss_weight = float(loss_weight)
+    
+    def forward(self, mat):
+        return self.loss_weight * torch.var(mat, unbiased=False)
+
+@LOSS_REGISTRY.register()
 class CharbonnierLoss(nn.Module):
     """Charbonnier loss (one variant of Robust L1Loss, a differentiable
     variant of L1Loss).
