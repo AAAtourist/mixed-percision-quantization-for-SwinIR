@@ -1,5 +1,6 @@
 import os
 import time
+import joblib
 import torch
 from collections import OrderedDict
 from copy import deepcopy
@@ -8,6 +9,7 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 from basicsr.models import lr_scheduler as lr_scheduler
 from basicsr.utils import get_root_logger
 from basicsr.utils.dist_util import master_only
+import torch.nn as nn
 
 
 class BaseModel():
@@ -205,7 +207,7 @@ class BaseModel():
         return [param_group['lr'] for param_group in self.optimizers[0].param_groups]
 
     @master_only
-    def save_network(self, net, net_label, current_iter, param_key='params'):
+    def save_network(self, net: nn.Module, net_label, current_iter, param_key='params'):
         """Save networks.
 
         Args:
@@ -233,6 +235,9 @@ class BaseModel():
                     key = key[7:]
                 state_dict[key] = param.cpu()
             save_dict[param_key_] = state_dict
+
+        kmeans_serialized = joblib.dumps(net.smooth_network.kmeans)
+        save_dict['kmeans'] = kmeans_serialized
 
         # avoid occasional writing errors
         retry = 3
@@ -314,6 +319,7 @@ class BaseModel():
                 load_net.pop(k)
         self._print_different_keys_loading(net, load_net, strict)
         net.load_state_dict(load_net, strict=strict)
+        net.smooth_network.kmeans = joblib.loads(load_net['kmeans'])
 
     @master_only
     def save_training_state(self, epoch, current_iter):

@@ -106,7 +106,7 @@ train:
 
   smooth_loss:
     type: VarLoss
-    loss_weight: 1e-7
+    loss_weight: 1e-9
     reduction: 
 
 

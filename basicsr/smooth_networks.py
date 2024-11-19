@@ -59,7 +59,8 @@ def lp_loss(pred, tgt):
 
 def compute_channel_statistics(tensors):
     means = torch.mean(tensors, dim=1)  #[2048, 60]
-    #means = means / torch.quantile(means, 0.6).detach()
+    mean_abs = torch.abs(means)
+    means = means / torch.quantile(mean_abs, 0.5).detach()
     stds = torch.std(tensors, dim=1)    #[2048, 60]
     return torch.cat([means, stds], dim=-1)  #[2048, 120]
 

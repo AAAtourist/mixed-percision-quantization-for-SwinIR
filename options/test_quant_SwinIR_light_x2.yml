@@ -8,6 +8,8 @@ gpu: 1
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
+clusters: 50
+
 quant:
   hook_per_layer: False
   hook_per_block: True
@@ -87,7 +89,7 @@ network_Q:
 
 # paths
 path:
-  pretrain_network_Q: /data/user/tourist/mixed-percision-quantization-for-SwinIR/experiments/add_smooth_loss/models/net_Q_5500.pth
+  pretrain_network_Q: /data/user/tourist/mixed-percision-quantization-for-SwinIR/experiments/bound_matrix_joint_1e-8_0.5_percen/models/net_Q_5000.pth
   strict_load_Q: true
 
 pathFP:
