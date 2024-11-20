@@ -156,7 +156,7 @@ class SRModel(BaseModel):
         for name, module in self.net_Q.named_modules():
             if isinstance(module, (QuantLinear, QuantMatMul)):
 
-                optim_bound_matrix_params.extend(module.get_bound_param())
+                #optim_bound_matrix_params.extend(module.get_bound_param())
                 logger.info(f'{name} is added in optim_bound_params')
 
         net = smooth_network()
@@ -238,7 +238,7 @@ class SRModel(BaseModel):
         #if current_iter % 2 == 1:
         if self.cri_pix:
             l_pix = self.cri_pix(self.output_Q, self.output_F) / self.output_Q.numel() * self.output_Q.size(0)
-            l_total += l_pix
+            #l_total += l_pix
             loss_dict['l_pix'] = l_pix
             
             #print('l_pix', l_pix)
@@ -265,7 +265,7 @@ class SRModel(BaseModel):
                 idx += 1
             
             #loss_dict['l_feature'] = l_feature
-            l_total += l_feature
+            #l_total += l_feature
 
         #self.optimizer_bound.zero_grad()
         #l_total.backward()
@@ -285,8 +285,10 @@ class SRModel(BaseModel):
             loss_dict['smooth_feature'] = l_smooth
 
         l_total += l_smooth
+        orth_loss = self.net_Q.smooth_network.orth_loss() * 1e-9
+        l_total += orth_loss
 
-        loss_dict['orth_loss'] = self.net_Q.smooth_network.orth_loss()
+        loss_dict['orth_loss'] = orth_loss
 
         self.optimizer_bound_matrix.zero_grad()
         l_total.backward()

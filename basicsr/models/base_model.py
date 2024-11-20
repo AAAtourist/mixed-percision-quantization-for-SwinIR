@@ -1,3 +1,4 @@
+import io
 import os
 import time
 import joblib
@@ -236,8 +237,10 @@ class BaseModel():
                 state_dict[key] = param.cpu()
             save_dict[param_key_] = state_dict
 
-        kmeans_serialized = joblib.dumps(net.smooth_network.kmeans)
-        save_dict['kmeans'] = kmeans_serialized
+        net = net[0] if isinstance(net, list) else net
+        kmeans_buffer = io.BytesIO()
+        joblib.dump(net.smooth_network.kmeans, kmeans_buffer)
+        save_dict['kmeans'] = kmeans_buffer.getvalue()
 
         # avoid occasional writing errors
         retry = 3
@@ -319,7 +322,10 @@ class BaseModel():
                 load_net.pop(k)
         self._print_different_keys_loading(net, load_net, strict)
         net.load_state_dict(load_net, strict=strict)
-        net.smooth_network.kmeans = joblib.loads(load_net['kmeans'])
+        if 'kmeans' in load_net:
+            kmeans_buffer = io.BytesIO(load_net['kmeans'])
+            print('load kmeans')
+            net.smooth_network.kmeans = joblib.load(kmeans_buffer)
 
     @master_only
     def save_training_state(self, epoch, current_iter):
