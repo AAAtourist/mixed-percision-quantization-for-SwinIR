@@ -240,14 +240,23 @@ class QuantLinear(nn.Linear):
         if self.first_time:
             global num_linear
             print(f'one linear finish:{num_linear}')
+            if num_linear == 0:
+                save_path = '/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/x.pt'
+                torch.save(x, save_path)
+                save_path = '/data/user/tourist/mixed-percision-quantization-for-SwinIR/scripts/weight.pt'
+                torch.save(self.weight, save_path)
             num_linear += 1
             self.first_time = False
             #draw_3d_plot(self.weight)
 
-        x = self.input_quantizer(x)
+        x_dequant = self.input_quantizer(x)
+        deltax = x_dequant - x
         w = self.weight_quantizer(self.weight)
+        deltaw = w - self.weight
+
         
-        out = F.linear(x, weight=w, bias=self.bias)
+        out = F.linear(x, weight=self.weight, bias=self.bias)
+        #out = F.linear(x, weight=self.weight) + F.linear(deltax, weight=deltaw, bias=self.bias)
 
         return out
 
@@ -301,7 +310,7 @@ def quant_model(model, input_quant_params={}, weight_quant_params={}):
             # Linear Layer
             idx = idx + 1 if idx != 0 else idx
             #new_m = QuantLinear(m.in_features, m.out_features, input_quant_params, weight_quant_params)
-            if 'fc2' in name:
+            if 'MatMul2' in name:
                 input_params_log = deepcopy(input_quant_params)
                 input_params_log['log_quant'] = True
                 new_m = QuantLinear(m.in_features, m.out_features, input_params_log, weight_quant_params)
