@@ -4,7 +4,7 @@ model_type: SwinIRModel
 scale: 2
 num_gpu: 1
 manual_seed: 0
-gpu: 5
+gpu: 2
 
 cali_data: /data/user/tourist/calidata/cali_data_100_x2.pth
 
@@ -18,6 +18,35 @@ quantization:
 
 
 datasets:
+  test_1:  # the 1st test dataset
+    task: SR
+    name: Set5
+    type: PairedImageDataset
+    dataroot_gt: /data/dataset/SR/benchmark/Set5/HR
+    dataroot_lq: /data/dataset/SR/benchmark/Set5/LR_bicubic/X2
+    filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
+
+  test_2:  # the 2st test dataset
+    task: SR
+    name: Set14
+    type: PairedImageDataset
+    dataroot_gt: /data/dataset/SR/benchmark/Set14/HR
+    dataroot_lq: /data/dataset/SR/benchmark/Set14/LR_bicubic/X2
+    filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
+
+  test_3:  # the 3st test dataset
+    task: SR
+    name: B100
+    type: PairedImageDataset
+    dataroot_gt: /data/dataset/SR/benchmark/B100/HR
+    dataroot_lq: /data/dataset/SR/benchmark/B100/LR_bicubic/X2
+    filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
 
   test_4:  # the 4st test dataset
     task: SR
@@ -26,6 +55,16 @@ datasets:
     dataroot_gt: /data/dataset/SR/benchmark/Urban100/HR
     dataroot_lq: /data/dataset/SR/benchmark/Urban100/LR_bicubic/X2
     filename_tmpl: '{}x2'
+    io_backend:
+      type: disk
+
+  test_5:  # the 5st test dataset
+    task: SR
+    name: Manga109
+    type: PairedImageDataset
+    dataroot_gt: /data/dataset/SR/benchmark/Manga109/HR
+    dataroot_lq: /data/dataset/SR/benchmark/Manga109/LR_bicubic/X2
+    filename_tmpl: '{}_LRBI_x2'
     io_backend:
       type: disk
 

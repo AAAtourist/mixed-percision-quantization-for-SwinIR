@@ -255,7 +255,7 @@ class QuantLinear(nn.Linear):
         deltaw = w - self.weight
 
         
-        out = F.linear(x, weight=self.weight, bias=self.bias)
+        out = F.linear(x_dequant, weight=w, bias=self.bias)
         #out = F.linear(x, weight=self.weight) + F.linear(deltax, weight=deltaw, bias=self.bias)
 
         return out
