@@ -9,8 +9,6 @@ quant:
   hook_per_layer: False
   hook_per_block: True
 
-clusters: 50
-
 quantization:
   bits_candidate: [4]
   input_quant_params:
@@ -103,11 +101,6 @@ train:
     type: MSELoss
     loss_weight: 5
     reduction: mean
-
-  smooth_loss:
-    type: VarLoss
-    loss_weight: 1e-9
-    reduction: 
 
 
 

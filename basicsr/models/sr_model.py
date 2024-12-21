@@ -77,7 +77,6 @@ class SRModel(BaseModel):
             self.load_network(self.net_Q, load_path, self.opt['pathFP'].get('strict_load_FP', True), param_key)
 
         #torch.autograd.set_detect_anomaly(True)
-        self.net_Q.smooth_network = smooth_network(opt['clusters'], opt['network_Q']['embed_dim'])
         #_ = get_global_smooth_network(opt['clusters'], opt['network_Q']['embed_dim'])
         self.net_Q = quant_model(
             model = self.net_Q,
@@ -133,9 +132,6 @@ class SRModel(BaseModel):
         else:
             self.feature_loss = None
 
-        if train_opt.get('smooth_loss'):
-            #self.Smooth_loss = True
-            self.Smooth_loss = build_loss(train_opt['smooth_loss']).to(self.device)
 
         if self.cri_pix is None and self.feature_loss is None:
             raise ValueError('Both pixel and feature_loss are None.')
@@ -144,7 +140,6 @@ class SRModel(BaseModel):
         self.setup_optimizers()
         self.setup_schedulers()
         self.build_hooks_on_Q_and_F()
-        self.build_hooks_on_smooth_networks()
         
     def setup_optimizers(self):
         from basicsr.quantize import QuantLinear, qkv_module, QuantMatMul
@@ -156,15 +151,8 @@ class SRModel(BaseModel):
         for name, module in self.net_Q.named_modules():
             if isinstance(module, (QuantLinear, QuantMatMul)):
 
-                #optim_bound_matrix_params.extend(module.get_bound_param())
+                optim_bound_matrix_params.extend(module.get_bound_param())
                 logger.info(f'{name} is added in optim_bound_params')
-
-        net = smooth_network()
-        
-        optim_bound_matrix_params.extend(net.A_matrices)
-        optim_bound_matrix_params.extend(net.B_matrices)
-
-        logger.info('global_smooth_network is added in optim_matrix_params')
                 
         optim_type = train_opt['optim_matrix_params'].pop('type')
         self.optimizer_bound_matrix = self.get_optimizer(optim_type, optim_bound_matrix_params, **train_opt['optim_matrix_params'])
@@ -202,30 +190,10 @@ class SRModel(BaseModel):
                     partial(hook_layer_forward, buffer=self.feature_Q)
                 )
 
-    def build_hooks_on_smooth_networks(self):
-
-        self.smooth_feature = []
-        def hook_smooth_network_loss(
-            module: Module, input: Tensor, output: Tuple, buffer: list
-        ):
-            buffer.append(output[0])
-            buffer.append(output[1])
-
-        net = smooth_network()
-        net.register_forward_hook(
-                    partial(hook_smooth_network_loss, buffer=self.smooth_feature)
-                )
-
-        '''for name, module in self.net_Q.named_modules():
-            if isinstance(module, QuantLinear) and module.smooth_network is not None:
-                module.smooth_network.register_forward_hook(
-                    partial(hook_smooth_network_loss, buffer=self.smooth_loss)
-                )'''
                 
     def optimize_parameters(self, current_iter):
         self.feature_Q.clear()
         self.feature_F.clear()
-        self.smooth_feature.clear()
 
         self.output_Q = self.net_Q(self.lq)
         with torch.no_grad():
@@ -234,14 +202,10 @@ class SRModel(BaseModel):
         l_total = 0
         loss_dict = OrderedDict()
         # pixel loss
-        #current_iter = (1 + current_iter) // 100
-        #if current_iter % 2 == 1:
         if self.cri_pix:
             l_pix = self.cri_pix(self.output_Q, self.output_F) / self.output_Q.numel() * self.output_Q.size(0)
             #l_total += l_pix
             loss_dict['l_pix'] = l_pix
-            
-            #print('l_pix', l_pix)
 
 
         # feature loss
@@ -267,34 +231,10 @@ class SRModel(BaseModel):
             #loss_dict['l_feature'] = l_feature
             #l_total += l_feature
 
-        #self.optimizer_bound.zero_grad()
-        #l_total.backward()
-        #self.optimizer_bound.step()
-
-        #if current_iter % 2 == 0:
-        if self.Smooth_loss:
-            l_smooth = 0
-            idx = 0
-            for feature_A, feature_B in zip(self.smooth_feature[::2], self.smooth_feature[1::2]):
-                fi = self.Smooth_loss(feature_A) + self.Smooth_loss(feature_B)
-                fi = fi / len(self.smooth_feature)
-                #loss_dict[f'smooth_feature_{idx}'] = fi
-                l_smooth += fi
-                idx += 1
-
-            loss_dict['smooth_feature'] = l_smooth
-
-        l_total += l_smooth
-        orth_loss = self.net_Q.smooth_network.orth_loss() * 1e-9
-        l_total += orth_loss
-
-        loss_dict['orth_loss'] = orth_loss
-
         self.optimizer_bound_matrix.zero_grad()
         l_total.backward()
         self.optimizer_bound_matrix.step()
 
-        
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
     def test(self):
